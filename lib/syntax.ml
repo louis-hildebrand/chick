@@ -47,3 +47,6 @@ let rec arrows (ts : tp list) : tp =
 (** Shorthand for applying a function to many arguments. *)
 let apps (f : syn_tm) (args : chk_tm list) : syn_tm =
   List.fold_left (fun f a -> App (f, a)) f args
+
+(** Shorthand for a variable as a checkable term. *)
+let sv (name : string) : chk_tm = Syn (Var name)
