@@ -24,7 +24,7 @@ let rec check (ctxt : context) (tm : chk_tm) (typ : tp) : unit =
       if type_eq (synth ctxt s) typ then ()
       else raise (Type_error "synthesizable term produced wrong type")
   | Nil, Vec (Num 0) -> ()
-  (* TODO: need to check Cons and Case too *)
+  (* TODO: need to check cons and match too *)
   | _ -> raise (Type_error "checkable term does not have expected type")
 
 (** Synthesize a type from the term [t] in context [ctxt]. *)
@@ -42,6 +42,8 @@ and synth (ctxt : context) (t : syn_tm) : tp =
           t2
       | _ ->
           raise (Type_error "left-hand side of application is not a function"))
+  | Head (_, _) -> failwith "TODO"
+  | Tail (_, _) -> failwith "TODO"
 
 (** Typecheck a complete program. *)
 let check_program (prog : program) : unit =
