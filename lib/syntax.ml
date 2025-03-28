@@ -33,3 +33,17 @@ type tp = Nat | Vec of chk_tm | Pi of string * tp * tp
 type kind = KTp | KPi of string * tp * kind
 type decl = { name : string; body : chk_tm; typ : tp }
 type program = decl list
+
+(** Shorthand for the type of a non-dependent function. *)
+let arrow (t1 : tp) (t2 : tp) : tp = Pi ("_", t1, t2)
+
+(** Shorthand for a chain of arrows. *)
+let rec arrows (ts : tp list) : tp =
+  match ts with
+  | [] | [ _ ] -> failwith "Not enough arguments"
+  | [ t1; t2 ] -> arrow t1 t2
+  | t :: ts -> arrow t (arrows ts)
+
+(** Shorthand for applying a function to many arguments. *)
+let apps (f : syn_tm) (args : chk_tm list) : syn_tm =
+  List.fold_left (fun f a -> App (f, a)) f args
