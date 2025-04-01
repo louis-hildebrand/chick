@@ -607,7 +607,7 @@ let test_take_wrong_base_case _ =
         Pi ("k", Nat, arrow (Vec (Sum [ sv "n"; sv "k" ])) (Vec (sv "k"))) )
   in
   assert_raises
-    (Type_error "Term 'Nil' does not have the expected type 'Vec n'.") (fun _ ->
+    (Type_error "Term 'nil' does not have the expected type 'Vec n'.") (fun _ ->
       check Context.empty take typ)
 
 let test_drop _ =
@@ -690,7 +690,7 @@ let test_drop_wrong_base_case _ =
         Pi ("k", Nat, arrow (Vec (Sum [ sv "k"; sv "n" ])) (Vec (sv "n"))) )
   in
   assert_raises
-    (Type_error "Term 'Nil' does not have the expected type 'Vec n'.") (fun _ ->
+    (Type_error "Term 'nil' does not have the expected type 'Vec n'.") (fun _ ->
       check Context.empty drop typ)
 
 let test_dot _ =

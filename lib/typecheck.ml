@@ -25,7 +25,11 @@ let rec check (ctxt : context) (tm : chk_tm) (typ : tp) : unit =
       else raise (Type_error "synthesizable term produced wrong type")
   | Nil, Vec (Num 0) -> ()
   (* TODO: need to check cons and match too *)
-  | _ -> raise (Type_error "checkable term does not have expected type")
+  | tm, tp ->
+      raise
+        (Type_error
+           ("Term '" ^ string_of_chk_tm tm
+          ^ "' does not have the expected type '" ^ string_of_tp tp ^ "'."))
 
 (** Synthesize a type from the term [t] in context [ctxt]. *)
 and synth (ctxt : context) (t : syn_tm) : tp =

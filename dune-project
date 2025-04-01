@@ -13,6 +13,6 @@
 (package
  (name typecheck)
  (synopsis "Type checker for simple dependently-typed language")
- (depends ocaml ounit2))
+ (depends ocaml ounit2 ppx_inline_test))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html
