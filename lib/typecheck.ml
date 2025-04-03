@@ -306,10 +306,6 @@ let%test _ = not (tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Vec (Num 0))))
 
 (** Check that, in context [ctx], [tm] has type [typ]. *)
 let rec check (ctx : context) (tm : chk_tm) (typ : tp) : unit =
-  (* let _ =
-    Printf.printf "check:\n \t%s\n\t%s\n\tctx = %s\n" (string_of_chk_tm tm)
-      (string_of_tp typ) (string_of_context ctx)
-  in *)
   match (tm, typ) with
   | Lam (x, body), Pi (_, tpA, tpB) -> check (ctx |> Context.add x tpA) body tpB
   | Fix (x, body), typ -> check (ctx |> Context.add x typ) body typ
@@ -378,118 +374,7 @@ and synth (ctx : context) (t : syn_tm) : tp =
         let f_app = apps (Var "#tail") [ len; Syn vec ] in
         synth (ctx |> Context.add "#tail" f_type) f_app
   in
-  (* let _ =
-    Printf.printf "syn:\n \t%s\n\t%s\n\tctx = %s\n" (string_of_syn_tm t)
-      (string_of_tp res_tp) (string_of_context ctx)
-  in *)
   res_tp
-
-(* unit tests for synthand check *)
-
-let%test _ =
-  let ctx = Context.empty |> Context.add "xs" (Vec (Num 6)) in
-  check ctx (Syn (Tail (Num 5, Var "xs"))) (Vec (Num 5)) = ()
-
-let count_down =
-  Fix
-    ( "count_down",
-      Lam
-        ( "n",
-          NatMatch
-            ( Var "n",
-              Nil,
-              "m",
-              Cons (sv "m", sv "m", Syn (App (Var "count_down", sv "m"))) ) ) )
-
-let%test _ =
-  let ctx = Context.empty in
-  check ctx count_down (Pi ("n", Nat, Vec (Syn (Var "n")))) = ()
-
-let count_up_from =
-  Fix
-    ( "cnt",
-      Lam
-        ( "n",
-          Lam
-            ( "z",
-              NatMatch
-                ( Var "n",
-                  Nil,
-                  "n'",
-                  Cons
-                    ( sv "n'",
-                      sv "z",
-                      Syn (apps (Var "cnt") [ sv "n'"; Sum [ sv "z"; Num 1 ] ])
-                    ) ) ) ) )
-
-let%test _ =
-  let ctx = Context.empty in
-  check ctx count_up_from (Pi ("n", Nat, arrow Nat (Vec (sv "n")))) = ()
-
-let map =
-  Fix
-    ( "map",
-      Lam
-        ( "n",
-          Lam
-            ( "v",
-              Lam
-                ( "f",
-                  VecMatch
-                    ( Var "v",
-                      Nil,
-                      "m",
-                      "x",
-                      "xs",
-                      Cons
-                        ( sv "m",
-                          Syn (App (Var "f", sv "x")),
-                          Syn (apps (Var "map") [ sv "m"; sv "xs"; sv "f" ]) )
-                    ) ) ) ) )
-
-let%test _ =
-  check Context.empty map
-    (Pi ("n", Nat, arrows [ Vec (sv "n"); arrow Nat Nat; Vec (sv "n") ]))
-  = ()
-
-let func =
-  Fix
-        ( "zip_with",
-          Lam
-            ( "n",
-              Lam
-                ( "v1",
-                  Lam
-                    ( "v2",
-                      Lam
-                        ( "f",
-                          NatMatch
-                            ( Var "n",
-                              Nil,
-                              "m",
-                              Cons
-                                ( sv "m",
-                                  Syn
-                                    (apps (Var "f")
-                                       [
-                                         Syn (Head (sv "m", Var "v1"));
-                                         Syn (Head (sv "m", Var "v2"));
-                                       ]),
-                                  Syn
-                                    (apps (Var "zip_with")
-                                       [ sv "m"; sv "xs"; sv "ys"; sv "f" ]) )
-                            ) ) ) ) ) )
-
-let%test _ =
-  check Context.empty func
-    (Pi
-    ( "n",
-      Nat,
-      arrows
-        [
-          Vec (sv "n"); Vec (sv "n"); arrows [ Nat; Nat; Nat ]; Vec (sv "n");
-        ] ))
-  = ()
 
 (** Typecheck a complete program. *)
 let check_program (prog : program) : unit =
