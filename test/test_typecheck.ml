@@ -148,7 +148,7 @@ let test_map _ =
                         Cons
                           ( sv "m",
                             Syn (App (Var "f", sv "x")),
-                            Syn (apps (Var "map") [ sv "m"; sv "f"; sv "xs" ])
+                            Syn (apps (Var "map") [ sv "m"; sv "xs"; sv "f" ])
                           ) ) ) ) ) )
   in
   let typ =
@@ -780,7 +780,7 @@ let tests =
          "drop:wrong base case" >:: test_drop_wrong_base_case;
          "dot:ok" >:: test_dot;
          "first_half:ok" >:: test_first_half;
-         ( "syn_success_no_dependent_types" >:: fun _ ->
+         ( "synth_success_no_dependent_types" >:: fun _ ->
            let ctxt =
              Context.of_seq
              @@ List.to_seq
@@ -788,11 +788,11 @@ let tests =
            in
            let t = App (Var "f", Sum [ sv "n"; Num 1 ]) in
            let expected = arrow Nat Nat in
-           let actual = syn ctxt t in
+           let actual = synth ctxt t in
            assert_equal expected actual );
          ( "free_var" >:: fun _ ->
            assert_raises (Type_error "free variable") (fun _ ->
-               syn Context.empty (Var "x")) );
+               synth Context.empty (Var "x")) );
        ]
 
 let _ = run_test_tt_main tests
