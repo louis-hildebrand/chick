@@ -75,7 +75,7 @@ let test_count_down_wrong_step_case _ =
               ( "n",
                 NatMatch
                   ( Var "n",
-                    Cons (Num 0, Num 0, Nil),
+                    Nil,
                     "m",
                     Cons (sv "n", sv "m", Syn (App (Var "count_down", sv "n")))
                   ) ) );
@@ -84,8 +84,8 @@ let test_count_down_wrong_step_case _ =
   in
   assert_raises
     (Type_error
-       "Term 'cons n m (count_down n)' does not have the expected type 'Vec n'.")
-    (fun _ -> check_program [ count_down ])
+       "Term 'cons (m + 1) m (count_down (m + 1))' does not have the expected \
+        type 'Vec (m + 1)'.") (fun _ -> check_program [ count_down ])
 
 let test_count_up _ =
   (*
@@ -95,7 +95,7 @@ let test_count_up _ =
         | 0 -> nil
         | n' + 1 -> cons n' z (cnt n' (z + 1))
     let count_up : Pi n:Nat . Vec n =
-      count_up_from n 0
+      \n.count_up_from n 0
   *)
   let count_up_from =
     {
@@ -123,7 +123,7 @@ let test_count_up _ =
   let count_up =
     {
       name = "count_up";
-      body = Syn (apps (Var "count_up_from") [ sv "n"; Num 0 ]);
+      body = Lam ("n", Syn (apps (Var "count_up_from") [ sv "n"; Num 0 ]));
       typ = Pi ("n", Nat, Vec (sv "n"));
     }
   in
@@ -342,8 +342,12 @@ let zip_with =
                                        ]),
                                   Syn
                                     (apps (Var "zip_with")
-                                       [ sv "m"; sv "xs"; sv "ys"; sv "f" ]) )
-                            ) ) ) ) ) );
+                                       [
+                                         sv "m";
+                                         Syn (Tail (sv "m", Var "v1"));
+                                         Syn (Tail (sv "m", Var "v2"));
+                                         sv "f";
+                                       ]) ) ) ) ) ) ) );
     typ =
       Pi
         ( "n",
@@ -420,7 +424,16 @@ let test_zip_with _ =
     }
   in
   check_program
-    [ concat; zip_with; example_use_0; n; m; example_use_1; example_use_2 ]
+    [
+      count_down;
+      concat;
+      zip_with;
+      example_use_0;
+      n;
+      m;
+      example_use_1;
+      example_use_2;
+    ]
 
 let test_zip_with_wrong_size_0_vs_1 _ =
   let plus = Lam ("a", Lam ("b", Sum [ sv "a"; sv "b" ])) in
@@ -601,9 +614,8 @@ let test_take_wrong_base_case _ =
         Nat,
         Pi ("k", Nat, arrow (Vec (Sum [ sv "n"; sv "k" ])) (Vec (sv "k"))) )
   in
-  assert_raises
-    (Type_error "Term 'nil' does not have the expected type 'Vec n'.") (fun _ ->
-      check Context.empty take typ)
+  assert_raises (Type_error "Term 'v' does not have the expected type 'Vec 0'.")
+    (fun _ -> check Context.empty take typ)
 
 let test_drop _ =
   (*
@@ -725,14 +737,20 @@ let test_dot _ =
     {
       name = "dot";
       body =
-        Syn
-          (apps (Var "vec_sum")
-             [
-               sv "n";
-               Syn
-                 (apps (Var "zip_with")
-                    [ sv "n"; sv "v1"; sv "v2"; sv "times" ]);
-             ]);
+        Lam
+          ( "n",
+            Lam
+              ( "v1",
+                Lam
+                  ( "v2",
+                    Syn
+                      (apps (Var "vec_sum")
+                         [
+                           sv "n";
+                           Syn
+                             (apps (Var "zip_with")
+                                [ sv "n"; sv "v1"; sv "v2"; sv "times" ]);
+                         ]) ) ) );
       typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Nat ]);
     }
   in
@@ -785,7 +803,7 @@ let tests =
            let actual = synth ctxt t in
            assert_equal expected actual );
          ( "free_var" >:: fun _ ->
-           assert_raises (Type_error "free variable") (fun _ ->
+           assert_raises (Type_error "Free variable: x") (fun _ ->
                synth Context.empty (Var "x")) );
        ]
 
