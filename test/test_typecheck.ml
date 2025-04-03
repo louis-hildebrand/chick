@@ -519,10 +519,10 @@ let take =
     let take : Pi n:Nat . Pi k:Nat . Pi _:Vec (k+n) . Vec k =
       fix take.\n.\k.\v.
         match k with
-        | case 0      -> v
+        | case 0      -> nil
         | case k' + 1 ->
-            let x = head (n + k' + 1) v in
-            let xs = tail (n + k' + 1) v in
+            let x = head (n + k') v in
+            let xs = tail (n + k') v in
             cons k' x (take n k' xs)
   *)
   {
@@ -538,21 +538,18 @@ let take =
                     ( "v",
                       NatMatch
                         ( Var "k",
-                          sv "v",
+                          Nil,
                           "k'",
                           Cons
                             ( sv "k'",
-                              Syn
-                                (Head (Sum [ sv "n"; sv "k'"; Num 1 ], Var "v")),
+                              Syn (Head (Sum [ sv "n"; sv "k'" ], Var "v")),
                               Syn
                                 (apps (Var "take")
                                    [
                                      sv "n";
                                      sv "k'";
                                      Syn
-                                       (Tail
-                                          ( Sum [ sv "n"; sv "k'"; Num 1 ],
-                                            Var "v" ));
+                                       (Tail (Sum [ sv "n"; sv "k'" ], Var "v"));
                                    ]) ) ) ) ) ) );
     typ =
       Pi
@@ -568,10 +565,10 @@ let test_take_wrong_base_case _ =
     let take : Pi n:Nat . Pi k:Nat . Pi _:Vec (k+n) . Vec k =
       fix take.\n.\k.\v.
         match k with
-        | case 0      -> nil  // <-- WRONG!
+        | case 0      -> v  // <-- WRONG!
         | case k' + 1 ->
-            let x = head (n + k' + 1) v in
-            let xs = tail (n + k' + 1) v in
+            let x = head (n + k') v in
+            let xs = tail (n + k') v in
             cons k' x (take n k' xs)
   *)
   let take =
@@ -585,19 +582,17 @@ let test_take_wrong_base_case _ =
                   ( "v",
                     NatMatch
                       ( Var "k",
-                        Nil,
+                        sv "v",
                         "k'",
                         Cons
                           ( sv "k'",
-                            Syn (Head (Sum [ sv "n"; sv "k'"; Num 1 ], Var "v")),
+                            Syn (Head (Sum [ sv "n"; sv "k'" ], Var "v")),
                             Syn
                               (apps (Var "take")
                                  [
                                    sv "n";
                                    sv "k'";
-                                   Syn
-                                     (Tail
-                                        (Sum [ sv "n"; sv "k'"; Num 1 ], Var "v"));
+                                   Syn (Tail (Sum [ sv "n"; sv "k'" ], Var "v"));
                                  ]) ) ) ) ) ) )
   in
   let typ =
@@ -616,7 +611,7 @@ let test_drop _ =
       fix drop.\n.\k.\v.
         match k with
         | 0      -> v
-        | k' + 1 -> drop n k' (tail (n + k' + 1) v)
+        | k' + 1 -> drop n k' (tail (n + k') v)
   *)
   let drop =
     Fix
@@ -636,8 +631,7 @@ let test_drop _ =
                              [
                                sv "n";
                                sv "k'";
-                               Syn
-                                 (Tail (Sum [ sv "n"; sv "k'"; Num 1 ], Var "v"));
+                               Syn (Tail (Sum [ sv "n"; sv "k'" ], Var "v"));
                              ]) ) ) ) ) )
   in
   let typ =
