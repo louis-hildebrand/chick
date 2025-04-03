@@ -304,6 +304,21 @@ let%test _ =
 
 let%test _ = not (tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Vec (Num 0))))
 
+(** Substitute in a context. *)
+let ctx_subst (ctx : context) (x : string) (t : chk_tm) : context =
+  (* TODO: Apparently subst in a context is prone to subtle bugs. Delete it ASAP. *)
+  (* For example, what happens if the variable being substituted appears in the context? *)
+  Context.mapi (fun _ typ -> tp_subst typ x t) ctx
+
+(* unit tests for ctx_subst *)
+let%test _ =
+  let ctx = Context.of_seq (List.to_seq [ ("n", Nat); ("v", Vec (sv "n")) ]) in
+  let expected =
+    Context.of_seq (List.to_seq [ ("n", Nat); ("v", Vec (Num 0)) ])
+  in
+  let actual = ctx_subst ctx "n" (Num 0) in
+  actual = expected
+
 (** Check that, in context [ctx], [tm] has type [typ]. *)
 let rec check (ctx : context) (tm : chk_tm) (typ : tp) : unit =
   match (tm, typ) with
@@ -313,18 +328,18 @@ let rec check (ctx : context) (tm : chk_tm) (typ : tp) : unit =
   | Sum xs, Nat -> List.iter (fun t -> check ctx t Nat) xs
   | Syn s, typ when tp_eq (synth ctx s) typ -> ()
   | Nil, typ when tp_eq typ (Vec (Num 0)) -> ()
-  | Cons (len, head, tail), Vec n ->
+  | Cons (len, head, tail), Vec n when same_size n (Sum [ len; Num 1 ]) ->
       check ctx len Nat;
       check ctx head Nat;
-      check ctx tail (Vec len);
-      if same_size n (Sum [ len; Num 1 ]) then ()
-      else raise (Type_error "cons term does not produce the expected type")
+      check ctx tail (Vec len)
   | NatMatch (Var v, zero_case, pred_name, succ_case), typ
     when synth ctx (Var v) = Nat ->
-      check ctx (chk_tm_subst zero_case v (Num 0)) (tp_subst typ v (Num 0));
+      check (ctx_subst ctx v (Num 0))
+        (chk_tm_subst zero_case v (Num 0))
+        (tp_subst typ v (Num 0));
+      let ctx = ctx |> Context.add pred_name Nat in
       let succ = Sum [ sv pred_name; Num 1 ] in
-      check
-        (ctx |> Context.add pred_name Nat)
+      check (ctx_subst ctx v succ)
         (chk_tm_subst succ_case v succ)
         (tp_subst typ v succ)
   | VecMatch (vec, nil_case, len_name, head_name, tail_name, cons_case), typ
@@ -332,13 +347,17 @@ let rec check (ctx : context) (tm : chk_tm) (typ : tp) : unit =
       let vec_type = synth ctx vec in
       match vec_type with
       | Vec (Syn (Var v)) ->
-          check ctx (chk_tm_subst nil_case v (Num 0)) (tp_subst typ v (Num 0));
+          check (ctx_subst ctx v (Num 0))
+            (chk_tm_subst nil_case v (Num 0))
+            (tp_subst typ v (Num 0));
           let ctx =
             ctx |> Context.add len_name Nat |> Context.add head_name Nat
             |> Context.add tail_name (Vec (sv len_name))
           in
           let succ = Sum [ sv len_name; Num 1 ] in
-          check ctx (chk_tm_subst cons_case v succ) (tp_subst typ v succ)
+          check (ctx_subst ctx v succ)
+            (chk_tm_subst cons_case v succ)
+            (tp_subst typ v succ)
       | _ -> raise (Type_error "vmatch type error"))
   | tm, typ ->
       raise
