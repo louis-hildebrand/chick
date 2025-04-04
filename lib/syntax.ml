@@ -1,11 +1,4 @@
-type syn_tm =
-  | Var of string
-  | App of syn_tm * chk_tm
-  (* TODO: It would be nice to remove these and implement them using VecMatch.
-           This would require supporting matching vectors whose length is NOT a
-           simple variable, but that should be doable. *)
-  | Head of (chk_tm (* length of tail *) * syn_tm (* vector *))
-  | Tail of (chk_tm (* length of tail *) * syn_tm (* vector *))
+type syn_tm = Var of string | App of syn_tm * chk_tm
 
 and chk_tm =
   | Lam of string * chk_tm
@@ -28,6 +21,7 @@ and chk_tm =
       * chk_tm (* expression for the zero case *)
       * string (* expression for the predecessor *)
       * chk_tm (* expression for the non-zero case *))
+  | Unreachable
 
 type tp = Nat | Vec of chk_tm | Pi of string * tp * tp
 type kind = KTp | KPi of string * tp * kind
@@ -65,40 +59,11 @@ let rec string_of_syn_tm (t : syn_tm) : string =
   match t with
   | Var x -> x
   | App (s, t) ->
-      let lhs =
-        match s with
-        | Var f -> f
-        | App _ -> string_of_syn_tm s
-        | _ -> "(" ^ string_of_syn_tm s ^ ")"
-      in
+      let lhs = string_of_syn_tm s in
       let rhs =
         match t with Syn (Var x) -> x | _ -> "(" ^ string_of_chk_tm t ^ ")"
       in
       lhs ^ " " ^ rhs
-  | Head (t, s) ->
-      let t_str =
-        match t with
-        | Num _ | Syn (Var _) -> string_of_chk_tm t
-        | _ -> "(" ^ string_of_chk_tm t ^ ")"
-      in
-      let s_str =
-        match s with
-        | Var _ -> string_of_syn_tm s
-        | _ -> "(" ^ string_of_syn_tm s ^ ")"
-      in
-      "head " ^ t_str ^ " " ^ s_str
-  | Tail (t, s) ->
-      let t_str =
-        match t with
-        | Num _ | Syn (Var _) -> string_of_chk_tm t
-        | _ -> "(" ^ string_of_chk_tm t ^ ")"
-      in
-      let s_str =
-        match s with
-        | Var _ -> string_of_syn_tm s
-        | _ -> "(" ^ string_of_syn_tm s ^ ")"
-      in
-      "tail " ^ t_str ^ " " ^ s_str
 
 (** Convert a checkable term to a string. *)
 and string_of_chk_tm (t : chk_tm) : string =
@@ -132,6 +97,7 @@ and string_of_chk_tm (t : chk_tm) : string =
   | VecMatch (s, t0, n, x, xs, t1) ->
       "vmatch " ^ string_of_syn_tm s ^ " with | nil -> " ^ string_of_chk_tm t0
       ^ " | cons " ^ n ^ " " ^ x ^ " " ^ xs ^ " -> " ^ string_of_chk_tm t1
+  | Unreachable -> "unreachable"
 
 let%test _ = string_of_syn_tm (Var "n") = "n"
 let%test _ = string_of_syn_tm (App (Var "f", sv "x")) = "f x"
@@ -147,27 +113,8 @@ let%test _ =
   actual = expected
 
 let%test _ =
-  let actual = string_of_syn_tm (Head (sv "n", Var "v")) in
-  let expected = "head n v" in
-  actual = expected
-
-let%test _ =
-  let actual =
-    string_of_syn_tm (Head (Sum [ sv "n"; sv "m" ], App (Var "f", sv "x")))
-  in
-  let expected = "head (n + m) (f x)" in
-  actual = expected
-
-let%test _ =
-  let actual = string_of_syn_tm (Tail (sv "n", Var "v")) in
-  let expected = "tail n v" in
-  actual = expected
-
-let%test _ =
-  let actual =
-    string_of_syn_tm (Tail (Sum [ sv "n"; sv "m" ], App (Var "f", sv "x")))
-  in
-  let expected = "tail (n + m) (f x)" in
+  let actual = string_of_syn_tm (App (Var "f", Sum [ sv "n"; Num 1 ])) in
+  let expected = "f (n + 1)" in
   actual = expected
 
 let%test _ =
@@ -186,12 +133,11 @@ let%test _ =
       (Sum
          [
            Sum [ Num 1; sv "n" ];
-           Syn (Head (sv "n", Var "v"));
-           Syn (App (Var "f", sv "x"));
+           Syn (apps (Var "f") [ sv "x"; sv "y" ]);
            Fix ("y", Sum [ sv "y"; sv "y" ]);
          ])
   in
-  let expected = "(1 + n) + head n v + f x + (fix y.y + y)" in
+  let expected = "(1 + n) + f x y + (fix y.y + y)" in
   actual = expected
 
 let%test _ =
@@ -215,9 +161,10 @@ let%test _ =
 let%test _ =
   let actual =
     string_of_chk_tm
-      (VecMatch (Var "v", Nil, "n", "x", "xs", Syn (App (Var "f", sv "x"))))
+      (VecMatch
+         (Var "v", Unreachable, "n", "x", "xs", Syn (App (Var "f", sv "x"))))
   in
-  let expected = "vmatch v with | nil -> nil | cons n x xs -> f x" in
+  let expected = "vmatch v with | nil -> unreachable | cons n x xs -> f x" in
   actual = expected
 
 (** Convert a type to a string. *)

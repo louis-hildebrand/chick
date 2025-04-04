@@ -179,6 +179,7 @@ let rec chk_tm_subst (t : chk_tm) (x : string) (e : chk_tm) : chk_tm =
               fresh_pred_name,
               chk_tm_subst non_zero_case x e )
       | _ -> failwith "TODO")
+  | Unreachable -> Unreachable
 
 (** Perform [e/x]s on the synthesizable term [s]. *)
 and syn_tm_subst (s : syn_tm) (x : string) (e : chk_tm) : chk_tm =
@@ -196,14 +197,6 @@ and syn_tm_subst (s : syn_tm) (x : string) (e : chk_tm) : chk_tm =
           (* Beta reduction / hereditary substitution *)
           chk_tm_subst body y t1'
       | _ -> failwith "TODO")
-  | Head (len, vec) -> (
-      let len' = chk_tm_subst len x e in
-      let vec' = syn_tm_subst vec x e in
-      match vec' with Syn s -> Syn (Head (len', s)) | _ -> failwith "TODO")
-  | Tail (len, vec) -> (
-      let len' = chk_tm_subst len x e in
-      let vec' = syn_tm_subst vec x e in
-      match vec' with Syn s -> Syn (Tail (len', s)) | _ -> failwith "TODO")
   | _ -> failwith "TODO"
 
 (* unit tests for chk_tm_subst and syn_tm_subst *)
@@ -332,16 +325,23 @@ let rec check (ctx : context) (tm : chk_tm) (typ : tp) : unit =
       check ctx len Nat;
       check ctx head Nat;
       check ctx tail (Vec len)
-  | NatMatch (Var v, zero_case, pred_name, succ_case), typ
-    when synth ctx (Var v) = Nat ->
-      check (ctx_subst ctx v (Num 0))
-        (chk_tm_subst zero_case v (Num 0))
-        (tp_subst typ v (Num 0));
-      let ctx = ctx |> Context.add pred_name Nat in
-      let succ = Sum [ sv pred_name; Num 1 ] in
-      check (ctx_subst ctx v succ)
-        (chk_tm_subst succ_case v succ)
-        (tp_subst typ v succ)
+  | NatMatch (s, zero_case, pred_name, succ_case), typ when synth ctx s = Nat
+    -> (
+      match s with
+      | Var v ->
+          check (ctx_subst ctx v (Num 0))
+            (chk_tm_subst zero_case v (Num 0))
+            (tp_subst typ v (Num 0));
+          let ctx = ctx |> Context.add pred_name Nat in
+          let succ = Sum [ sv pred_name; Num 1 ] in
+          check (ctx_subst ctx v succ)
+            (chk_tm_subst succ_case v succ)
+            (tp_subst typ v succ)
+      | _ ->
+          raise
+            (Type_error
+               ("Target of nmatch is " ^ string_of_syn_tm s
+              ^ ", which is unsupported.")))
   | VecMatch (vec, nil_case, len_name, head_name, tail_name, cons_case), typ
     -> (
       let vec_type = synth ctx vec in
@@ -358,7 +358,11 @@ let rec check (ctx : context) (tm : chk_tm) (typ : tp) : unit =
           check (ctx_subst ctx v succ)
             (chk_tm_subst cons_case v succ)
             (tp_subst typ v succ)
-      | _ -> raise (Type_error "vmatch type error"))
+      | t ->
+          raise
+            (Type_error
+               ("Target of vmatch synthesized type " ^ string_of_tp t
+              ^ ", which is unsupported.")))
   | tm, typ ->
       raise
         (Type_error
@@ -380,18 +384,6 @@ and synth (ctx : context) (t : syn_tm) : tp =
             check ctx t tpA;
             tp_subst tpB x t
         | _ -> raise (Type_error "applying non-function"))
-    | Head (len, vec) ->
-        let in_type = Vec (Sum [ sv "x"; Num 1 ]) in
-        let out_type = Nat in
-        let f_type = Pi ("x", Nat, arrow in_type out_type) in
-        let f_app = apps (Var "#head") [ len; Syn vec ] in
-        synth (ctx |> Context.add "#head" f_type) f_app
-    | Tail (len, vec) ->
-        let in_type = Vec (Sum [ sv "x"; Num 1 ]) in
-        let out_type = Vec (sv "x") in
-        let f_type = Pi ("x", Nat, arrow in_type out_type) in
-        let f_app = apps (Var "#tail") [ len; Syn vec ] in
-        synth (ctx |> Context.add "#tail" f_type) f_app
   in
   res_tp
 

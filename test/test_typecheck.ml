@@ -2,6 +2,43 @@ open OUnit2
 open Typecheck
 open Syntax
 
+let head =
+  (*
+    let head : Pi (n:Nat) . Vec (n+1) -> Nat =
+      \n.\v.
+        match v with
+        | nil -> unreachable
+        | cons n x xs -> x
+  *)
+  {
+    name = "head";
+    body =
+      Lam
+        ("n", Lam ("v", VecMatch (Var "v", Unreachable, "n", "x", "xs", sv "x")));
+    typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) Nat);
+  }
+
+let test_head _ = check_program [ head ]
+
+let tail =
+  (*
+    let tail : Pi (n:Nat) . Vec (n+1) -> Vec n =
+      \n.\v.
+        match v with
+        | nil -> unreachable
+        | cons n x xs -> xs
+  *)
+  {
+    name = "tail";
+    body =
+      Lam
+        ( "n",
+          Lam ("v", VecMatch (Var "v", Unreachable, "n", "x", "xs", sv "xs")) );
+    typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) Nat);
+  }
+
+let test_tail _ = check_program [ tail ]
+
 let count_down =
   (*
     let count_down : Pi n:Nat . Vec n =
@@ -337,15 +374,23 @@ let zip_with =
                                   Syn
                                     (apps (Var "f")
                                        [
-                                         Syn (Head (sv "m", Var "v1"));
-                                         Syn (Head (sv "m", Var "v2"));
+                                         Syn
+                                           (apps (Var "head")
+                                              [ sv "m"; sv "v1" ]);
+                                         Syn
+                                           (apps (Var "head")
+                                              [ sv "m"; sv "v2" ]);
                                        ]),
                                   Syn
                                     (apps (Var "zip_with")
                                        [
                                          sv "m";
-                                         Syn (Tail (sv "m", Var "v1"));
-                                         Syn (Tail (sv "m", Var "v2"));
+                                         Syn
+                                           (apps (Var "tail")
+                                              [ sv "m"; sv "v1" ]);
+                                         Syn
+                                           (apps (Var "tail")
+                                              [ sv "m"; sv "v2" ]);
                                          sv "f";
                                        ]) ) ) ) ) ) ) );
     typ =
@@ -357,6 +402,8 @@ let zip_with =
               Vec (sv "n"); Vec (sv "n"); arrows [ Nat; Nat; Nat ]; Vec (sv "n");
             ] );
   }
+
+(* TODO: Also test a version of zip_with that uses nested vmatch rather than head/tail? *)
 
 let test_zip_with _ =
   let plus = Lam ("a", Lam ("b", Sum [ sv "a"; sv "b" ])) in
@@ -425,6 +472,8 @@ let test_zip_with _ =
   in
   check_program
     [
+      head;
+      tail;
       count_down;
       concat;
       zip_with;
@@ -457,10 +506,10 @@ let test_zip_with_wrong_size_0_vs_1 _ =
   in
   assert_raises
     (Type_error "Term 'v1' does not have the expected type 'Vec 0'.") (fun _ ->
-      check_program [ zip_with; v0; v1; zipped0 ]);
+      check_program [ head; tail; zip_with; v0; v1; zipped0 ]);
   assert_raises
     (Type_error "Term 'v0' does not have the expected type 'Vec 1'.") (fun _ ->
-      check_program [ zip_with; v0; v1; zipped1 ])
+      check_program [ head; tail; zip_with; v0; v1; zipped1 ])
 
 let test_zip_with_wrong_size_n_vs_m _ =
   let plus = Lam ("a", Lam ("b", Sum [ sv "a"; sv "b" ])) in
@@ -522,10 +571,10 @@ let test_zip_with_wrong_size_n_vs_m _ =
   in
   assert_raises
     (Type_error "Term 'v1' does not have the expected type 'Vec n'.") (fun _ ->
-      check_program [ zip_with; ex0 ]);
+      check_program [ head; tail; zip_with; ex0 ]);
   assert_raises
     (Type_error "Term 'v0' does not have the expected type 'Vec m'.") (fun _ ->
-      check_program [ zip_with; ex1 ])
+      check_program [ head; tail; zip_with; ex1 ])
 
 let take =
   (*
@@ -555,14 +604,17 @@ let take =
                           "k'",
                           Cons
                             ( sv "k'",
-                              Syn (Head (Sum [ sv "n"; sv "k'" ], Var "v")),
+                              Syn
+                                (apps (Var "head")
+                                   [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
                               Syn
                                 (apps (Var "take")
                                    [
                                      sv "n";
                                      sv "k'";
                                      Syn
-                                       (Tail (Sum [ sv "n"; sv "k'" ], Var "v"));
+                                       (apps (Var "tail")
+                                          [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
                                    ]) ) ) ) ) ) );
     typ =
       Pi
@@ -571,7 +623,7 @@ let take =
           Pi ("k", Nat, arrow (Vec (Sum [ sv "n"; sv "k" ])) (Vec (sv "k"))) );
   }
 
-let test_take _ = check_program [ take ]
+let test_take _ = check_program [ head; tail; take ]
 
 let test_take_wrong_base_case _ =
   (*
@@ -599,13 +651,17 @@ let test_take_wrong_base_case _ =
                         "k'",
                         Cons
                           ( sv "k'",
-                            Syn (Head (Sum [ sv "n"; sv "k'" ], Var "v")),
+                            Syn
+                              (apps (Var "head")
+                                 [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
                             Syn
                               (apps (Var "take")
                                  [
                                    sv "n";
                                    sv "k'";
-                                   Syn (Tail (Sum [ sv "n"; sv "k'" ], Var "v"));
+                                   Syn
+                                     (apps (Var "tail")
+                                        [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
                                  ]) ) ) ) ) ) )
   in
   let typ =
@@ -626,33 +682,39 @@ let test_drop _ =
         | k' + 1 -> drop n k' (tail (n + k') v)
   *)
   let drop =
-    Fix
-      ( "drop",
-        Lam
-          ( "n",
+    {
+      name = "drop";
+      body =
+        Fix
+          ( "drop",
             Lam
-              ( "k",
+              ( "n",
                 Lam
-                  ( "v",
-                    NatMatch
-                      ( Var "k",
-                        sv "v",
-                        "k'",
-                        Syn
-                          (apps (Var "drop")
-                             [
-                               sv "n";
-                               sv "k'";
-                               Syn (Tail (Sum [ sv "n"; sv "k'" ], Var "v"));
-                             ]) ) ) ) ) )
+                  ( "k",
+                    Lam
+                      ( "v",
+                        NatMatch
+                          ( Var "k",
+                            sv "v",
+                            "k'",
+                            Syn
+                              (apps (Var "drop")
+                                 [
+                                   sv "n";
+                                   sv "k'";
+                                   Syn
+                                     (apps (Var "tail")
+                                        [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
+                                 ]) ) ) ) ) );
+      typ =
+        Pi
+          ( "n",
+            Nat,
+            Pi ("k", Nat, arrow (Vec (Sum [ sv "k"; sv "n" ])) (Vec (sv "n")))
+          );
+    }
   in
-  let typ =
-    Pi
-      ( "n",
-        Nat,
-        Pi ("k", Nat, arrow (Vec (Sum [ sv "k"; sv "n" ])) (Vec (sv "n"))) )
-  in
-  check Context.empty drop typ
+  check_program [ head; tail; drop ]
 
 (*
   I actually made this mistake when writing the original code xD
@@ -660,44 +722,51 @@ let test_drop _ =
   presentation.
 *)
 let test_drop_wrong_base_case _ =
-  (*
-    let drop : Pi n:Nat . Pi k:Nat . Pi _:Vec (k+n) . Vec n =
-      fix drop.\n.\k.\v.
-        match k with
-        | 0      -> nil  // <-- WRONG!
-        | k' + 1 -> drop n k' (tail (n + k' + 1) v)
-  *)
   let drop =
-    Fix
-      ( "drop",
-        Lam
-          ( "n",
+    {
+      (*
+        let drop : Pi n:Nat . Pi k:Nat . Pi _:Vec (k+n) . Vec n =
+          fix drop.\n.\k.\v.
+            match k with
+            | 0      -> nil  // <-- WRONG!
+            | k' + 1 -> drop n k' (tail (n + k' + 1) v)
+      *)
+      name = "drop";
+      body =
+        Fix
+          ( "drop",
             Lam
-              ( "k",
+              ( "n",
                 Lam
-                  ( "v",
-                    NatMatch
-                      ( Var "k",
-                        Nil,
-                        "k'",
-                        Syn
-                          (apps (Var "drop")
-                             [
-                               sv "n";
-                               sv "k'";
-                               Syn
-                                 (Tail (Sum [ sv "n"; sv "k'"; Num 1 ], Var "v"));
-                             ]) ) ) ) ) )
-  in
-  let typ =
-    Pi
-      ( "n",
-        Nat,
-        Pi ("k", Nat, arrow (Vec (Sum [ sv "k"; sv "n" ])) (Vec (sv "n"))) )
+                  ( "k",
+                    Lam
+                      ( "v",
+                        NatMatch
+                          ( Var "k",
+                            Nil,
+                            "k'",
+                            Syn
+                              (apps (Var "drop")
+                                 [
+                                   sv "n";
+                                   sv "k'";
+                                   Syn
+                                     (apps (Var "tail")
+                                        [
+                                          Sum [ sv "n"; sv "k'"; Num 1 ]; sv "v";
+                                        ]);
+                                 ]) ) ) ) ) );
+      typ =
+        Pi
+          ( "n",
+            Nat,
+            Pi ("k", Nat, arrow (Vec (Sum [ sv "k"; sv "n" ])) (Vec (sv "n")))
+          );
+    }
   in
   assert_raises
     (Type_error "Term 'nil' does not have the expected type 'Vec n'.") (fun _ ->
-      check Context.empty drop typ)
+      check_program [ head; tail; drop ])
 
 let test_dot _ =
   let times =
@@ -754,7 +823,7 @@ let test_dot _ =
       typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Nat ]);
     }
   in
-  check_program [ foldl; vec_sum; zip_with; times; dot ]
+  check_program [ head; tail; foldl; vec_sum; zip_with; times; dot ]
 
 (* Here's how you can specify that a vector must have even length. *)
 let test_first_half _ =
@@ -770,11 +839,13 @@ let test_first_half _ =
       typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; sv "n" ])) (Vec (sv "n")));
     }
   in
-  check_program [ take; first_half ]
+  check_program [ head; tail; take; first_half ]
 
 let tests =
   "typecheck"
   >::: [
+         "head:ok" >:: test_head;
+         "tail:ok" >:: test_tail;
          "count_down:ok" >:: test_count_down;
          "count_down:wrong base case" >:: test_count_down_wrong_base_case;
          "count_down:wrong step case" >:: test_count_down_wrong_step_case;
