@@ -29,9 +29,6 @@ and chk_tm =
 
 type len = LVar of string | LNum of int | LSum of len list
 type tp = Nat | Vec of chk_tm | Pi of string * tp * tp
-
-(* TODO: Delete this? *)
-type kind = KTp | KPi of string * tp * kind
 type decl = { name : string; body : chk_tm; typ : tp }
 type program = decl list
 
