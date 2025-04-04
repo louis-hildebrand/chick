@@ -1,6 +1,6 @@
 open OUnit2
-open Typecheck
-open Syntax
+open Chick.Typecheck
+open Chick.Syntax
 
 let head =
   (*

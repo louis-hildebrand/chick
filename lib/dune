@@ -3,4 +3,4 @@
  (preprocess
   (pps ppx_inline_test))
  (libraries z3)
- (name typecheck))
+ (name chick))

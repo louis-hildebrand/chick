@@ -1,6 +1,5 @@
 open Syntax
 module Context = Map.Make (String)
-module Syntax = Syntax
 
 type context = tp Context.t
 
@@ -108,6 +107,8 @@ let same_size (t1 : chk_tm) (t2 : chk_tm) : bool =
     let t2 = normalize_sum [ t2 ] in
     t1 = t2
 
+(* unit tests for same_size *)
+
 let%test _ = same_size (Num 0) (Num 0)
 let%test _ = same_size (Num 1) (Num 1)
 let%test _ = not (same_size (Num 1) (Num 2))
@@ -127,8 +128,6 @@ let%test _ =
   same_size
     (Sum [ Num 3; Num 9; sv "y"; sv "x"; Num 1; Num 2; sv "z" ])
     (Sum [ Num 15; sv "x"; sv "y"; sv "z" ])
-
-(* unit tests for same_size *)
 
 (** Perform [e/x]t on the checkable term [t]. *)
 let rec chk_tm_subst (t : chk_tm) (x : string) (e : chk_tm) : chk_tm =
