@@ -28,9 +28,23 @@ and chk_tm =
   | Unreachable
 
 type len = LVar of string | LNum of int | LSum of len list
+
+(* TODO: Make the argument of Vec a len rather than a chk_tm? *)
 type tp = Nat | Vec of chk_tm | Pi of string * tp * tp
 type decl = { name : string; body : chk_tm; typ : tp }
 type program = decl list
+
+(** Try to convert an arbitrary expression to a length. *)
+let rec len_of_tm (t : chk_tm) : len option =
+  match t with
+  | Syn (Var x) -> Some (LVar x)
+  | Num n -> Some (LNum n)
+  | Sum xs ->
+      let term_options = List.map len_of_tm xs in
+      if List.for_all (fun x -> Option.is_some x) term_options then
+        Some (LSum (List.map (fun x -> Option.get x) term_options))
+      else None
+  | _ -> None
 
 (** Variables in a length. *)
 let rec vars (n : len) : str_set =

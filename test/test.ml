@@ -34,7 +34,7 @@ let tail =
       Lam
         ( "n",
           Lam ("v", VecMatch (Var "v", Unreachable, "n", "x", "xs", sv "xs")) );
-    typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) Nat);
+    typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) (Vec (sv "n")));
   }
 
 let test_tail _ = check_program [ tail ]
@@ -91,7 +91,7 @@ let test_count_down_wrong_base_case _ =
     }
   in
   assert_raises
-    (Type_error "Term 'cons 0 0 nil' does not have the expected type 'Vec 0'.")
+    (Type_error "Term 'cons 0 0 nil' does not have the expected type 'Vec n'.")
     (fun _ -> check_program [ count_down ])
 
 let test_count_down_wrong_step_case _ =
@@ -121,8 +121,8 @@ let test_count_down_wrong_step_case _ =
   in
   assert_raises
     (Type_error
-       "Term 'cons (m + 1) m (count_down (m + 1))' does not have the expected \
-        type 'Vec (m + 1)'.") (fun _ -> check_program [ count_down ])
+       "Term 'cons n m (count_down n)' does not have the expected type 'Vec n'.")
+    (fun _ -> check_program [ count_down ])
 
 let test_count_up _ =
   (*
@@ -681,7 +681,7 @@ let test_take_wrong_base_case _ =
           );
     }
   in
-  assert_raises (Type_error "Term 'v' does not have the expected type 'Vec 0'.")
+  assert_raises (Type_error "Term 'v' does not have the expected type 'Vec k'.")
     (fun _ -> check_program [ take ])
 
 let test_drop _ =

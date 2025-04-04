@@ -3,6 +3,7 @@ open Syntax
 
 type equation = len * len
 
+let mk_equation = fun x -> x
 let debug = false
 
 type prop =
