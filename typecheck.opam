@@ -9,6 +9,7 @@ depends: [
   "ocaml"
   "ounit2"
   "ppx_inline_test"
+  "z3"
   "odoc" {with-doc}
 ]
 build: [
