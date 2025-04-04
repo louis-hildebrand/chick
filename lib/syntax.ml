@@ -1,3 +1,7 @@
+module StringSet = Set.Make (String)
+
+type str_set = StringSet.t
+
 type syn_tm = Var of string | App of syn_tm * chk_tm
 
 and chk_tm =
@@ -23,10 +27,23 @@ and chk_tm =
       * chk_tm (* expression for the non-zero case *))
   | Unreachable
 
+type len = LVar of string | LNum of int | LSum of len list
 type tp = Nat | Vec of chk_tm | Pi of string * tp * tp
+
+(* TODO: Delete this? *)
 type kind = KTp | KPi of string * tp * kind
 type decl = { name : string; body : chk_tm; typ : tp }
 type program = decl list
+
+(** Variables in a length. *)
+let rec vars (n : len) : str_set =
+  match n with
+  | LNum _ -> StringSet.empty
+  | LVar x -> StringSet.singleton x
+  | LSum terms ->
+      List.fold_left
+        (fun acc x -> StringSet.union acc (vars x))
+        StringSet.empty terms
 
 (** Shorthand for the type of a non-dependent function. *)
 let arrow (t1 : tp) (t2 : tp) : tp = Pi ("_", t1, t2)
