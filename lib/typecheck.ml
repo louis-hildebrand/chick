@@ -1,13 +1,9 @@
+open Context
 open Syntax
-module Context = Map.Make (String)
 
 type context = tp Context.t
 
 exception Type_error of string
-
-let string_of_context (ctx : context) : string =
-  Context.fold (fun k v acc -> acc ^ k ^ " : " ^ string_of_tp v ^ ", ") ctx "["
-  ^ "]"
 
 (** Create a fresh variable. *)
 let get_fresh_var : unit -> string =

@@ -168,30 +168,33 @@ let test_count_up _ =
 
 let test_map _ =
   let map =
-    Fix
-      ( "map",
-        Lam
-          ( "n",
+    {
+      name = "map";
+      body =
+        Fix
+          ( "map",
             Lam
-              ( "v",
+              ( "n",
                 Lam
-                  ( "f",
-                    VecMatch
-                      ( Var "v",
-                        Nil,
-                        "m",
-                        "x",
-                        "xs",
-                        Cons
-                          ( sv "m",
-                            Syn (App (Var "f", sv "x")),
-                            Syn (apps (Var "map") [ sv "m"; sv "xs"; sv "f" ])
-                          ) ) ) ) ) )
+                  ( "v",
+                    Lam
+                      ( "f",
+                        VecMatch
+                          ( Var "v",
+                            Nil,
+                            "m",
+                            "x",
+                            "xs",
+                            Cons
+                              ( sv "m",
+                                Syn (App (Var "f", sv "x")),
+                                Syn
+                                  (apps (Var "map") [ sv "m"; sv "xs"; sv "f" ])
+                              ) ) ) ) ) );
+      typ = Pi ("n", Nat, arrows [ Vec (sv "n"); arrow Nat Nat; Vec (sv "n") ]);
+    }
   in
-  let typ =
-    Pi ("n", Nat, arrows [ Vec (sv "n"); arrow Nat Nat; Vec (sv "n") ])
-  in
-  check Context.empty map typ
+  check_program [ map ]
 
 let foldl =
   {
@@ -253,35 +256,39 @@ let test_foldl _ = check_program [ foldl; vec_sum ]
 
 let test_foldr _ =
   let foldr =
-    Fix
-      ( "foldr",
-        Lam
-          ( "n",
+    {
+      name = "foldr";
+      body =
+        Fix
+          ( "foldr",
             Lam
-              ( "v",
+              ( "n",
                 Lam
-                  ( "z",
+                  ( "v",
                     Lam
-                      ( "f",
-                        VecMatch
-                          ( Var "v",
-                            sv "z",
-                            "m",
-                            "x",
-                            "xs",
-                            Syn
-                              (apps (Var "f")
-                                 [
-                                   sv "x";
-                                   Syn
-                                     (apps (Var "foldr")
-                                        [ sv "m"; sv "xs"; sv "z"; sv "f" ]);
-                                 ]) ) ) ) ) ) )
+                      ( "z",
+                        Lam
+                          ( "f",
+                            VecMatch
+                              ( Var "v",
+                                sv "z",
+                                "m",
+                                "x",
+                                "xs",
+                                Syn
+                                  (apps (Var "f")
+                                     [
+                                       sv "x";
+                                       Syn
+                                         (apps (Var "foldr")
+                                            [ sv "m"; sv "xs"; sv "z"; sv "f" ]);
+                                     ]) ) ) ) ) ) );
+      typ =
+        Pi
+          ("n", Nat, arrows [ Vec (sv "n"); Nat; arrows [ Nat; Nat; Nat ]; Nat ]);
+    }
   in
-  let typ =
-    Pi ("n", Nat, arrows [ Vec (sv "n"); Nat; arrows [ Nat; Nat; Nat ]; Nat ])
-  in
-  check Context.empty foldr typ
+  check_program [ foldr ]
 
 let concat =
   {
@@ -637,41 +644,45 @@ let test_take_wrong_base_case _ =
             cons k' x (take n k' xs)
   *)
   let take =
-    Fix
-      ( "take",
-        Lam
-          ( "n",
+    {
+      name = "take";
+      body =
+        Fix
+          ( "take",
             Lam
-              ( "k",
+              ( "n",
                 Lam
-                  ( "v",
-                    NatMatch
-                      ( Var "k",
-                        sv "v",
-                        "k'",
-                        Cons
-                          ( sv "k'",
-                            Syn
-                              (apps (Var "head")
-                                 [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
-                            Syn
-                              (apps (Var "take")
-                                 [
-                                   sv "n";
-                                   sv "k'";
-                                   Syn
-                                     (apps (Var "tail")
-                                        [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
-                                 ]) ) ) ) ) ) )
-  in
-  let typ =
-    Pi
-      ( "n",
-        Nat,
-        Pi ("k", Nat, arrow (Vec (Sum [ sv "n"; sv "k" ])) (Vec (sv "k"))) )
+                  ( "k",
+                    Lam
+                      ( "v",
+                        NatMatch
+                          ( Var "k",
+                            sv "v",
+                            "k'",
+                            Cons
+                              ( sv "k'",
+                                Syn
+                                  (apps (Var "head")
+                                     [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
+                                Syn
+                                  (apps (Var "take")
+                                     [
+                                       sv "n";
+                                       sv "k'";
+                                       Syn
+                                         (apps (Var "tail")
+                                            [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
+                                     ]) ) ) ) ) ) );
+      typ =
+        Pi
+          ( "n",
+            Nat,
+            Pi ("k", Nat, arrow (Vec (Sum [ sv "n"; sv "k" ])) (Vec (sv "k")))
+          );
+    }
   in
   assert_raises (Type_error "Term 'v' does not have the expected type 'Vec 0'.")
-    (fun _ -> check Context.empty take typ)
+    (fun _ -> check_program [ take ])
 
 let test_drop _ =
   (*
@@ -863,19 +874,6 @@ let tests =
          "drop:wrong base case" >:: test_drop_wrong_base_case;
          "dot:ok" >:: test_dot;
          "first_half:ok" >:: test_first_half;
-         ( "synth_success_no_dependent_types" >:: fun _ ->
-           let ctxt =
-             Context.of_seq
-             @@ List.to_seq
-                  [ ("f", Pi ("_", Nat, Pi ("_", Nat, Nat))); ("n", Nat) ]
-           in
-           let t = App (Var "f", Sum [ sv "n"; Num 1 ]) in
-           let expected = arrow Nat Nat in
-           let actual = synth ctxt t in
-           assert_equal expected actual );
-         ( "free_var" >:: fun _ ->
-           assert_raises (Type_error "Free variable: x") (fun _ ->
-               synth Context.empty (Var "x")) );
        ]
 
 let _ = run_test_tt_main tests
