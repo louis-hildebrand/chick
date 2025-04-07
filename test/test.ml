@@ -852,6 +852,165 @@ let test_first_half _ =
   in
   check_program [ head; tail; take; first_half ]
 
+let test_vmatch_unreachable_and_missing _ =
+  let foo =
+    (*
+      let foo : Pi (n:Nat) . Vec n -> Vec n -> Vec n =
+        fix foo.\n.\v1.\v2.
+          vmatch v1 with
+          | nil ->
+            vmatch v2 with
+            | nil -> nil
+            | cons n' x xs -> unreachable
+          | cons n' x xs ->
+            vmatch v2 with
+            | nil -> unreachable
+            | cons n' y ys ->
+              cons n' (x + y) (foo n' xs ys)
+    *)
+    {
+      name = "foo";
+      body =
+        Fix
+          ( "foo",
+            Lam
+              ( "n",
+                Lam
+                  ( "v1",
+                    Lam
+                      ( "v2",
+                        VecMatch
+                          ( Var "v1",
+                            VecMatch
+                              (Var "v2", Nil, "n'", "x", "xs", Unreachable),
+                            "n'",
+                            "x",
+                            "xs",
+                            VecMatch
+                              ( Var "v2",
+                                Unreachable,
+                                "n'",
+                                "y",
+                                "ys",
+                                Cons
+                                  ( sv "n'",
+                                    Sum [ sv "x"; sv "y" ],
+                                    Syn
+                                      (apps (Var "foo")
+                                         [ sv "n'"; sv "xs"; sv "ys" ]) ) ) ) )
+                  ) ) );
+      typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Vec (sv "n") ]);
+    }
+  in
+  check_program [ foo ]
+
+let test_vmatch_nil_case_reachable_but_missing _ =
+  let unsafe_head =
+    (*
+      let head : Pi (n:Nat) . Vec n -> Nat =
+        \n.\v.
+          vmatch v with
+          | nil -> unreachable
+          | cons n' x xs -> x
+    *)
+    {
+      name = "head";
+      body =
+        Lam
+          ( "n",
+            Lam ("v", VecMatch (Var "v", Unreachable, "n'", "x", "xs", sv "x"))
+          );
+      typ = Pi ("n", Nat, arrow (Vec (sv "n")) Nat);
+    }
+  in
+  assert_raises (Type_error "The nil branch is reachable but not implemented.")
+    (fun _ -> check_program [ unsafe_head ])
+
+let test_vmatch_nil_case_unreachable_but_implemented _ =
+  let head =
+    (*
+      let head : Pi (n:Nat) . Vec (n+1) -> Nat =
+        \n.\v.
+          vmatch v with
+          | nil -> 0
+          | cons n' x xs -> x
+    *)
+    {
+      name = "head";
+      body =
+        Lam ("n", Lam ("v", VecMatch (Var "v", Num 0, "n'", "x", "xs", sv "x")));
+      typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) Nat);
+    }
+  in
+  assert_raises
+    (Type_error
+       "The nil branch is unreachable and should therefore be left \
+        unimplemented.") (fun _ -> check_program [ head ])
+
+let test_vmatch_cons_case_reachable_but_missing _ =
+  let foo =
+    (*
+      let foo : Pi (n:Nat) . Vec n -> Nat =
+        \n.\v.
+          vmatch v with
+          | nil -> 0
+          | cons n' x xs -> unreachable
+    *)
+    {
+      name = "foo";
+      body =
+        Lam
+          ( "n",
+            Lam ("v", VecMatch (Var "v", Num 0, "n'", "x", "xs", Unreachable))
+          );
+      typ = Pi ("n", Nat, arrow (Vec (sv "n")) Nat);
+    }
+  in
+  assert_raises (Type_error "The cons branch is reachable but not implemented.")
+    (fun _ -> check_program [ foo ])
+
+let test_vmatch_cons_case_unreachable_but_implemented _ =
+  let foo =
+    (*
+      let foo : Pi (n:Nat) . Vec n -> Vec n -> Vec n =
+        \n.\v1.\v2.
+          vmatch v1 with
+          | nil ->
+            vmatch v2 with
+            | nil -> nil
+            | cons n' x xs -> cons n' x xs
+          | cons n' x xs -> cons n' x xs
+    *)
+    {
+      name = "foo";
+      body =
+        Lam
+          ( "n",
+            Lam
+              ( "v1",
+                Lam
+                  ( "v2",
+                    VecMatch
+                      ( Var "v1",
+                        VecMatch
+                          ( Var "v2",
+                            Nil,
+                            "n'",
+                            "x",
+                            "xs",
+                            Cons (sv "n'", sv "x", sv "xs") ),
+                        "n'",
+                        "x",
+                        "xs",
+                        Cons (sv "n'", sv "x", sv "xs") ) ) ) );
+      typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Vec (sv "n") ]);
+    }
+  in
+  assert_raises
+    (Type_error
+       "The cons branch is unreachable and should therefore be left \
+        unimplemented.") (fun _ -> check_program [ foo ])
+
 let tests =
   "typecheck"
   >::: [
@@ -874,6 +1033,15 @@ let tests =
          "drop:wrong base case" >:: test_drop_wrong_base_case;
          "dot:ok" >:: test_dot;
          "first_half:ok" >:: test_first_half;
+         "vmatch-unreachable-missing" >:: test_vmatch_unreachable_and_missing;
+         "vmatch-nil-reachable-missing"
+         >:: test_vmatch_nil_case_reachable_but_missing;
+         "vmatch-nil-unreachable-implemented"
+         >:: test_vmatch_nil_case_unreachable_but_implemented;
+         "vmatch-cons-reachable-missing"
+         >:: test_vmatch_cons_case_reachable_but_missing;
+         "vmatch-cons-unreachable-implemented"
+         >:: test_vmatch_cons_case_unreachable_but_implemented;
        ]
 
 let _ = run_test_tt_main tests

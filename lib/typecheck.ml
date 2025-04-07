@@ -291,11 +291,17 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
             | Unreachable, false -> ()
             | Unreachable, true ->
                 (* TODO: Give an example instantiation? *)
-                raise (Type_error "The zero branch is NOT unreachable.")
+                raise
+                  (Type_error
+                     "The zero branch is reachable but not implemented.")
             | t, true ->
                 let delta' = mk_equation (n, LNum 0) :: delta in
                 check gamma delta' t typ
-            | _, false -> raise (Type_error "The zero branch is unreachable.")
+            | _, false ->
+                raise
+                  (Type_error
+                     "The zero branch is unreachable and should therefore be \
+                      left unimplemented.")
           in
           let check_succ_case () =
             let succ = LSum [ LVar pred_name; LNum 1 ] in
@@ -303,12 +309,18 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
             match (succ_case, is_reachable) with
             | Unreachable, false -> ()
             | Unreachable, true ->
-                raise (Type_error "The succ branch is NOT unreachable.")
+                raise
+                  (Type_error
+                     "The succ branch is reachable but not implemented.")
             | t, true ->
                 let gamma' = gamma |> Context.add pred_name Nat in
                 let delta' = mk_equation (n, succ) :: delta in
                 check gamma' delta' t typ
-            | _, false -> raise (Type_error "The succ branch is unreachable.")
+            | _, false ->
+                raise
+                  (Type_error
+                     "The succ branch is unreachable and should therefore be \
+                      left unimplemented.")
           in
           check_zero_case ();
           check_succ_case ()
@@ -331,12 +343,17 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
                 match (nil_case, is_reachable) with
                 | Unreachable, false -> ()
                 | Unreachable, true ->
-                    raise (Type_error "The nil branch is NOT unreachable.")
+                    raise
+                      (Type_error
+                         "The nil branch is reachable but not implemented.")
                 | t, true ->
                     let delta' = mk_equation (n, LNum 0) :: delta in
                     check gamma delta' t typ
                 | _, false ->
-                    raise (Type_error "The nil branch is unreachable.")
+                    raise
+                      (Type_error
+                         "The nil branch is unreachable and should therefore \
+                          be left unimplemented.")
               in
               let check_cons_case () =
                 let succ = LSum [ LVar len_name; LNum 1 ] in
@@ -346,7 +363,9 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
                 match (cons_case, is_reachable) with
                 | Unreachable, false -> ()
                 | Unreachable, true ->
-                    raise (Type_error "The cons branch is NOT unreachable.")
+                    raise
+                      (Type_error
+                         "The cons branch is reachable but not implemented.")
                 | t, true ->
                     let gamma' =
                       gamma |> Context.add len_name Nat
@@ -356,7 +375,10 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
                     let delta' = mk_equation (n, succ) :: delta in
                     check gamma' delta' t typ
                 | _, false ->
-                    raise (Type_error "The cons branch is unreachable.")
+                    raise
+                      (Type_error
+                         "The cons branch is unreachable and should therefore \
+                          be left unimplemented.")
               in
               check_nil_case ();
               check_cons_case ()
