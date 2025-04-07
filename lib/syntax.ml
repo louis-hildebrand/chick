@@ -15,17 +15,18 @@ and chk_tm =
   | Syn of syn_tm
   | VecMatch of
       (syn_tm (* list to match on *)
-      * chk_tm (* expression for the nil case *)
-      * string (* name for length of tail *)
-      * string (* name for head of vec *)
-      * string (* name for tail of vec *)
-      * chk_tm (* expression for the cons case *))
+      * chk_tm option (* expression for the nil case *)
+      * (string (* name for length of tail *)
+        * string (* name for head of vec *)
+        * string (* name for tail of vec *)
+        * chk_tm (* expression for the cons case *))
+        option)
   | NatMatch of
       (syn_tm (* number to match on *)
-      * chk_tm (* expression for the zero case *)
-      * string (* expression for the predecessor *)
-      * chk_tm (* expression for the non-zero case *))
-  | Unreachable
+      * chk_tm option (* expression for the zero case *)
+      * (string (* name for the predecessor *)
+        * chk_tm (* expression for the non-zero case *))
+        option)
 
 type len = LVar of string | LNum of int | LSum of len list
 
@@ -119,13 +120,34 @@ and string_of_chk_tm (t : chk_tm) : string =
       in
       "cons " ^ with_parens n ^ " " ^ with_parens x ^ " " ^ with_parens xs
   | Syn s -> string_of_syn_tm s
-  | NatMatch (s, t0, x, t1) ->
-      "nmatch " ^ string_of_syn_tm s ^ " with | 0 -> " ^ string_of_chk_tm t0
-      ^ " | " ^ x ^ " + 1 -> " ^ string_of_chk_tm t1
-  | VecMatch (s, t0, n, x, xs, t1) ->
-      "vmatch " ^ string_of_syn_tm s ^ " with | nil -> " ^ string_of_chk_tm t0
-      ^ " | cons " ^ n ^ " " ^ x ^ " " ^ xs ^ " -> " ^ string_of_chk_tm t1
-  | Unreachable -> "unreachable"
+  | NatMatch (s, t0, t1) ->
+      let str1 = "nmatch " ^ string_of_syn_tm s ^ " with" in
+      let str2 =
+        match t0 with
+        | None -> str1
+        | Some t0 -> str1 ^ " | 0 -> " ^ string_of_chk_tm t0
+      in
+      let str3 =
+        match t1 with
+        | None -> str2
+        | Some (x, t1) -> str2 ^ " | " ^ x ^ " + 1 -> " ^ string_of_chk_tm t1
+      in
+      str3
+  | VecMatch (s, t0, t1) ->
+      let str1 = "vmatch " ^ string_of_syn_tm s ^ " with" in
+      let str2 =
+        match t0 with
+        | None -> str1
+        | Some t0 -> str1 ^ " | nil -> " ^ string_of_chk_tm t0
+      in
+      let str3 =
+        match t1 with
+        | None -> str2
+        | Some (n, x, xs, t1) ->
+            str2 ^ " | cons " ^ n ^ " " ^ x ^ " " ^ xs ^ " -> "
+            ^ string_of_chk_tm t1
+      in
+      str3
 
 let%test _ = string_of_syn_tm (Var "n") = "n"
 let%test _ = string_of_syn_tm (App (Var "f", sv "x")) = "f x"
@@ -181,7 +203,8 @@ let%test _ =
 
 let%test _ =
   let actual =
-    string_of_chk_tm (NatMatch (Var "n", Num 42, "m", Sum [ sv "m"; sv "k" ]))
+    string_of_chk_tm
+      (NatMatch (Var "n", Some (Num 42), Some ("m", Sum [ sv "m"; sv "k" ])))
   in
   let expected = "nmatch n with | 0 -> 42 | m + 1 -> m + k" in
   actual = expected
@@ -190,9 +213,22 @@ let%test _ =
   let actual =
     string_of_chk_tm
       (VecMatch
-         (Var "v", Unreachable, "n", "x", "xs", Syn (App (Var "f", sv "x"))))
+         (Var "v", None, Some ("n", "x", "xs", Syn (App (Var "f", sv "x")))))
   in
-  let expected = "vmatch v with | nil -> unreachable | cons n x xs -> f x" in
+  let expected = "vmatch v with | cons n x xs -> f x" in
+  actual = expected
+
+let%test _ =
+  let actual = string_of_chk_tm (VecMatch (Var "v", Some (Num 0), None)) in
+  let expected = "vmatch v with | nil -> 0" in
+  actual = expected
+
+let%test _ =
+  let actual =
+    string_of_chk_tm
+      (VecMatch (Var "v", Some (Num 0), Some ("n'", "x", "xs", Num 1)))
+  in
+  let expected = "vmatch v with | nil -> 0 | cons n' x xs -> 1" in
   actual = expected
 
 (** Convert a type to a string. *)

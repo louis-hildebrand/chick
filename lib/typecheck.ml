@@ -89,37 +89,8 @@ let rec chk_tm_subst (t : chk_tm) (x : string) (e : chk_tm) : chk_tm =
   | Cons (len, head, tail) ->
       Cons (chk_tm_subst len x e, chk_tm_subst head x e, chk_tm_subst tail x e)
   | Syn s -> syn_tm_subst s x e
-  | VecMatch (vec, nil_case, _, _, _, cons_case) -> (
-      let fresh_len_name = get_fresh_var () in
-      let fresh_head_name = get_fresh_var () in
-      let fresh_tail_name = get_fresh_var () in
-      let cons_case = chk_tm_subst cons_case x (sv fresh_len_name) in
-      let cons_case = chk_tm_subst cons_case x (sv fresh_head_name) in
-      let cons_case = chk_tm_subst cons_case x (sv fresh_tail_name) in
-      let vec_sub = syn_tm_subst vec x e in
-      match vec_sub with
-      | Syn s ->
-          VecMatch
-            ( s,
-              chk_tm_subst nil_case x e,
-              fresh_len_name,
-              fresh_head_name,
-              fresh_tail_name,
-              chk_tm_subst cons_case x e )
-      | _ -> failwith "TODO")
-  | NatMatch (nat, zero_case, _, non_zero_case) -> (
-      let fresh_pred_name = get_fresh_var () in
-      let non_zero_case = chk_tm_subst non_zero_case x (sv fresh_pred_name) in
-      let nat_sub = syn_tm_subst nat x e in
-      match nat_sub with
-      | Syn s ->
-          NatMatch
-            ( s,
-              chk_tm_subst zero_case x e,
-              fresh_pred_name,
-              chk_tm_subst non_zero_case x e )
-      | _ -> failwith "TODO")
-  | Unreachable -> Unreachable
+  | VecMatch _ -> failwith "TODO"
+  | NatMatch _ -> failwith "TODO"
 
 (** Perform [e/x]s on the synthesizable term [s]. *)
 and syn_tm_subst (s : syn_tm) (x : string) (e : chk_tm) : chk_tm =
@@ -279,8 +250,7 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
       check gamma delta len Nat;
       check gamma delta head Nat;
       check gamma delta tail (Vec len)
-  | NatMatch (s, zero_case, pred_name, succ_case), typ
-    when synth gamma delta s = Nat -> (
+  | NatMatch (s, zero_case, succ_case), typ when synth gamma delta s = Nat -> (
       match len_of_tm (Syn s) with
       | Some n ->
           let check_zero_case () =
@@ -288,35 +258,39 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
               Solver.can_equal (mk_equation (n, LNum 0)) delta
             in
             match (zero_case, is_reachable) with
-            | Unreachable, false -> ()
-            | Unreachable, true ->
+            | None, false -> ()
+            | None, true ->
                 (* TODO: Give an example instantiation? *)
                 raise
                   (Type_error
                      "The zero branch is reachable but not implemented.")
-            | t, true ->
+            | Some t, true ->
                 let delta' = mk_equation (n, LNum 0) :: delta in
                 check gamma delta' t typ
-            | _, false ->
+            | Some _, false ->
                 raise
                   (Type_error
                      "The zero branch is unreachable and should therefore be \
                       left unimplemented.")
           in
           let check_succ_case () =
-            let succ = LSum [ LVar pred_name; LNum 1 ] in
-            let is_reachable = Solver.can_equal (mk_equation (n, succ)) delta in
+            let is_reachable =
+              Solver.can_equal
+                (mk_equation (n, LSum [ LVar (get_fresh_var ()); LNum 1 ]))
+                delta
+            in
             match (succ_case, is_reachable) with
-            | Unreachable, false -> ()
-            | Unreachable, true ->
+            | None, false -> ()
+            | None, true ->
                 raise
                   (Type_error
                      "The succ branch is reachable but not implemented.")
-            | t, true ->
+            | Some (pred_name, t), true ->
+                let succ = LSum [ LVar pred_name; LNum 1 ] in
                 let gamma' = gamma |> Context.add pred_name Nat in
                 let delta' = mk_equation (n, succ) :: delta in
                 check gamma' delta' t typ
-            | _, false ->
+            | Some _, false ->
                 raise
                   (Type_error
                      "The succ branch is unreachable and should therefore be \
@@ -329,8 +303,7 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
             (Type_error
                ("Target of nmatch is " ^ string_of_syn_tm s
               ^ ", which is unsupported. It must be a length.")))
-  | VecMatch (vec, nil_case, len_name, head_name, tail_name, cons_case), typ
-    -> (
+  | VecMatch (vec, nil_case, cons_case), typ -> (
       let vec_type = synth gamma delta vec in
       match vec_type with
       | Vec t -> (
@@ -341,40 +314,42 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
                   Solver.can_equal (mk_equation (n, LNum 0)) delta
                 in
                 match (nil_case, is_reachable) with
-                | Unreachable, false -> ()
-                | Unreachable, true ->
+                | None, false -> ()
+                | None, true ->
                     raise
                       (Type_error
                          "The nil branch is reachable but not implemented.")
-                | t, true ->
+                | Some t, true ->
                     let delta' = mk_equation (n, LNum 0) :: delta in
                     check gamma delta' t typ
-                | _, false ->
+                | Some _, false ->
                     raise
                       (Type_error
                          "The nil branch is unreachable and should therefore \
                           be left unimplemented.")
               in
               let check_cons_case () =
-                let succ = LSum [ LVar len_name; LNum 1 ] in
                 let is_reachable =
-                  Solver.can_equal (mk_equation (n, succ)) delta
+                  Solver.can_equal
+                    (mk_equation (n, LSum [ LVar (get_fresh_var ()); LNum 1 ]))
+                    delta
                 in
                 match (cons_case, is_reachable) with
-                | Unreachable, false -> ()
-                | Unreachable, true ->
+                | None, false -> ()
+                | None, true ->
                     raise
                       (Type_error
                          "The cons branch is reachable but not implemented.")
-                | t, true ->
+                | Some (len_name, head_name, tail_name, t), true ->
                     let gamma' =
                       gamma |> Context.add len_name Nat
                       |> Context.add head_name Nat
                       |> Context.add tail_name (Vec (sv len_name))
                     in
+                    let succ = LSum [ LVar len_name; LNum 1 ] in
                     let delta' = mk_equation (n, succ) :: delta in
                     check gamma' delta' t typ
-                | _, false ->
+                | Some _, false ->
                     raise
                       (Type_error
                          "The cons branch is unreachable and should therefore \
@@ -392,12 +367,6 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
             (Type_error
                ("Target of vmatch synthesized type " ^ string_of_tp t
               ^ ". It must be a vector.")))
-  | Unreachable, _ ->
-      raise
-        (Type_error
-           ("'"
-           ^ string_of_chk_tm Unreachable
-           ^ "' can only be used directly inside a match."))
   | tm, typ ->
       raise
         (Type_error

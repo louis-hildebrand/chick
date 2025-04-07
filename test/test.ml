@@ -14,7 +14,7 @@ let head =
     name = "head";
     body =
       Lam
-        ("n", Lam ("v", VecMatch (Var "v", Unreachable, "n", "x", "xs", sv "x")));
+        ("n", Lam ("v", VecMatch (Var "v", None, Some ("n", "x", "xs", sv "x"))));
     typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) Nat);
   }
 
@@ -33,7 +33,7 @@ let tail =
     body =
       Lam
         ( "n",
-          Lam ("v", VecMatch (Var "v", Unreachable, "n", "x", "xs", sv "xs")) );
+          Lam ("v", VecMatch (Var "v", None, Some ("n", "x", "xs", sv "xs"))) );
     typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) (Vec (sv "n")));
   }
 
@@ -56,10 +56,11 @@ let count_down =
             ( "n",
               NatMatch
                 ( Var "n",
-                  Nil,
-                  "m",
-                  Cons (sv "m", sv "m", Syn (App (Var "count_down", sv "m"))) )
-            ) );
+                  Some Nil,
+                  Some
+                    ( "m",
+                      Cons (sv "m", sv "m", Syn (App (Var "count_down", sv "m")))
+                    ) ) ) );
     typ = Pi ("n", Nat, Vec (Syn (Var "n")));
   }
 
@@ -83,10 +84,12 @@ let test_count_down_wrong_base_case _ =
               ( "n",
                 NatMatch
                   ( Var "n",
-                    Cons (Num 0, Num 0, Nil),
-                    "m",
-                    Cons (sv "m", sv "m", Syn (App (Var "count_down", sv "m")))
-                  ) ) );
+                    Some (Cons (Num 0, Num 0, Nil)),
+                    Some
+                      ( "m",
+                        Cons
+                          (sv "m", sv "m", Syn (App (Var "count_down", sv "m")))
+                      ) ) ) );
       typ = Pi ("n", Nat, Vec (Syn (Var "n")));
     }
   in
@@ -112,10 +115,12 @@ let test_count_down_wrong_step_case _ =
               ( "n",
                 NatMatch
                   ( Var "n",
-                    Nil,
-                    "m",
-                    Cons (sv "n", sv "m", Syn (App (Var "count_down", sv "n")))
-                  ) ) );
+                    Some Nil,
+                    Some
+                      ( "m",
+                        Cons
+                          (sv "n", sv "m", Syn (App (Var "count_down", sv "n")))
+                      ) ) ) );
       typ = Pi ("n", Nat, Vec (Syn (Var "n")));
     }
   in
@@ -146,14 +151,16 @@ let test_count_up _ =
                   ( "z",
                     NatMatch
                       ( Var "n",
-                        Nil,
-                        "n'",
-                        Cons
-                          ( sv "n'",
-                            sv "z",
-                            Syn
-                              (apps (Var "cnt")
-                                 [ sv "n'"; Sum [ sv "z"; Num 1 ] ]) ) ) ) ) );
+                        Some Nil,
+                        Some
+                          ( "n'",
+                            Cons
+                              ( sv "n'",
+                                sv "z",
+                                Syn
+                                  (apps (Var "cnt")
+                                     [ sv "n'"; Sum [ sv "z"; Num 1 ] ]) ) ) )
+                  ) ) );
       typ = Pi ("n", Nat, arrow Nat (Vec (sv "n")));
     }
   in
@@ -181,16 +188,18 @@ let test_map _ =
                       ( "f",
                         VecMatch
                           ( Var "v",
-                            Nil,
-                            "m",
-                            "x",
-                            "xs",
-                            Cons
-                              ( sv "m",
-                                Syn (App (Var "f", sv "x")),
-                                Syn
-                                  (apps (Var "map") [ sv "m"; sv "xs"; sv "f" ])
-                              ) ) ) ) ) );
+                            Some Nil,
+                            Some
+                              ( "m",
+                                "x",
+                                "xs",
+                                Cons
+                                  ( sv "m",
+                                    Syn (App (Var "f", sv "x")),
+                                    Syn
+                                      (apps (Var "map")
+                                         [ sv "m"; sv "xs"; sv "f" ]) ) ) ) ) )
+              ) );
       typ = Pi ("n", Nat, arrows [ Vec (sv "n"); arrow Nat Nat; Vec (sv "n") ]);
     }
   in
@@ -212,18 +221,19 @@ let foldl =
                         ( "f",
                           VecMatch
                             ( Var "v",
-                              Syn (Var "z"),
-                              "m",
-                              "x",
-                              "xs",
-                              Syn
-                                (apps (Var "foldl")
-                                   [
-                                     sv "m";
-                                     sv "xs";
-                                     Syn (apps (Var "f") [ sv "z"; sv "x" ]);
-                                     sv "f";
-                                   ]) ) ) ) ) ) );
+                              Some (Syn (Var "z")),
+                              Some
+                                ( "m",
+                                  "x",
+                                  "xs",
+                                  Syn
+                                    (apps (Var "foldl")
+                                       [
+                                         sv "m";
+                                         sv "xs";
+                                         Syn (apps (Var "f") [ sv "z"; sv "x" ]);
+                                         sv "f";
+                                       ]) ) ) ) ) ) ) );
     typ =
       Pi ("n", Nat, arrows [ Vec (sv "n"); Nat; arrows [ Nat; Nat; Nat ]; Nat ]);
   }
@@ -271,18 +281,24 @@ let test_foldr _ =
                           ( "f",
                             VecMatch
                               ( Var "v",
-                                sv "z",
-                                "m",
-                                "x",
-                                "xs",
-                                Syn
-                                  (apps (Var "f")
-                                     [
-                                       sv "x";
-                                       Syn
-                                         (apps (Var "foldr")
-                                            [ sv "m"; sv "xs"; sv "z"; sv "f" ]);
-                                     ]) ) ) ) ) ) );
+                                Some (sv "z"),
+                                Some
+                                  ( "m",
+                                    "x",
+                                    "xs",
+                                    Syn
+                                      (apps (Var "f")
+                                         [
+                                           sv "x";
+                                           Syn
+                                             (apps (Var "foldr")
+                                                [
+                                                  sv "m";
+                                                  sv "xs";
+                                                  sv "z";
+                                                  sv "f";
+                                                ]);
+                                         ]) ) ) ) ) ) ) );
       typ =
         Pi
           ("n", Nat, arrows [ Vec (sv "n"); Nat; arrows [ Nat; Nat; Nat ]; Nat ]);
@@ -306,17 +322,18 @@ let concat =
                         ( "v2",
                           VecMatch
                             ( Var "v1",
-                              Syn (Var "v2"),
-                              "n'",
-                              "x",
-                              "xs",
-                              Cons
-                                ( Sum [ sv "n'"; sv "m" ],
-                                  sv "x",
-                                  Syn
-                                    (apps (Var "concat")
-                                       [ sv "n'"; sv "m"; sv "xs"; sv "v2" ]) )
-                            ) ) ) ) ) );
+                              Some (Syn (Var "v2")),
+                              Some
+                                ( "n'",
+                                  "x",
+                                  "xs",
+                                  Cons
+                                    ( Sum [ sv "n'"; sv "m" ],
+                                      sv "x",
+                                      Syn
+                                        (apps (Var "concat")
+                                           [ sv "n'"; sv "m"; sv "xs"; sv "v2" ])
+                                    ) ) ) ) ) ) ) );
     typ =
       Pi
         ( "n",
@@ -374,32 +391,33 @@ let zip_with =
                         ( "f",
                           NatMatch
                             ( Var "n",
-                              Nil,
-                              "m",
-                              Cons
-                                ( sv "m",
-                                  Syn
-                                    (apps (Var "f")
-                                       [
-                                         Syn
-                                           (apps (Var "head")
-                                              [ sv "m"; sv "v1" ]);
-                                         Syn
-                                           (apps (Var "head")
-                                              [ sv "m"; sv "v2" ]);
-                                       ]),
-                                  Syn
-                                    (apps (Var "zip_with")
-                                       [
-                                         sv "m";
-                                         Syn
-                                           (apps (Var "tail")
-                                              [ sv "m"; sv "v1" ]);
-                                         Syn
-                                           (apps (Var "tail")
-                                              [ sv "m"; sv "v2" ]);
-                                         sv "f";
-                                       ]) ) ) ) ) ) ) );
+                              Some Nil,
+                              Some
+                                ( "m",
+                                  Cons
+                                    ( sv "m",
+                                      Syn
+                                        (apps (Var "f")
+                                           [
+                                             Syn
+                                               (apps (Var "head")
+                                                  [ sv "m"; sv "v1" ]);
+                                             Syn
+                                               (apps (Var "head")
+                                                  [ sv "m"; sv "v2" ]);
+                                           ]),
+                                      Syn
+                                        (apps (Var "zip_with")
+                                           [
+                                             sv "m";
+                                             Syn
+                                               (apps (Var "tail")
+                                                  [ sv "m"; sv "v1" ]);
+                                             Syn
+                                               (apps (Var "tail")
+                                                  [ sv "m"; sv "v2" ]);
+                                             sv "f";
+                                           ]) ) ) ) ) ) ) ) );
     typ =
       Pi
         ( "n",
@@ -607,22 +625,25 @@ let take =
                     ( "v",
                       NatMatch
                         ( Var "k",
-                          Nil,
-                          "k'",
-                          Cons
-                            ( sv "k'",
-                              Syn
-                                (apps (Var "head")
-                                   [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
-                              Syn
-                                (apps (Var "take")
-                                   [
-                                     sv "n";
-                                     sv "k'";
-                                     Syn
-                                       (apps (Var "tail")
-                                          [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
-                                   ]) ) ) ) ) ) );
+                          Some Nil,
+                          Some
+                            ( "k'",
+                              Cons
+                                ( sv "k'",
+                                  Syn
+                                    (apps (Var "head")
+                                       [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
+                                  Syn
+                                    (apps (Var "take")
+                                       [
+                                         sv "n";
+                                         sv "k'";
+                                         Syn
+                                           (apps (Var "tail")
+                                              [
+                                                Sum [ sv "n"; sv "k'" ]; sv "v";
+                                              ]);
+                                       ]) ) ) ) ) ) ) );
     typ =
       Pi
         ( "n",
@@ -657,22 +678,26 @@ let test_take_wrong_base_case _ =
                       ( "v",
                         NatMatch
                           ( Var "k",
-                            sv "v",
-                            "k'",
-                            Cons
-                              ( sv "k'",
-                                Syn
-                                  (apps (Var "head")
-                                     [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
-                                Syn
-                                  (apps (Var "take")
-                                     [
-                                       sv "n";
-                                       sv "k'";
-                                       Syn
-                                         (apps (Var "tail")
-                                            [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
-                                     ]) ) ) ) ) ) );
+                            Some (sv "v"),
+                            Some
+                              ( "k'",
+                                Cons
+                                  ( sv "k'",
+                                    Syn
+                                      (apps (Var "head")
+                                         [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
+                                    Syn
+                                      (apps (Var "take")
+                                         [
+                                           sv "n";
+                                           sv "k'";
+                                           Syn
+                                             (apps (Var "tail")
+                                                [
+                                                  Sum [ sv "n"; sv "k'" ];
+                                                  sv "v";
+                                                ]);
+                                         ]) ) ) ) ) ) ) );
       typ =
         Pi
           ( "n",
@@ -706,17 +731,18 @@ let test_drop _ =
                       ( "v",
                         NatMatch
                           ( Var "k",
-                            sv "v",
-                            "k'",
-                            Syn
-                              (apps (Var "drop")
-                                 [
-                                   sv "n";
-                                   sv "k'";
-                                   Syn
-                                     (apps (Var "tail")
-                                        [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
-                                 ]) ) ) ) ) );
+                            Some (sv "v"),
+                            Some
+                              ( "k'",
+                                Syn
+                                  (apps (Var "drop")
+                                     [
+                                       sv "n";
+                                       sv "k'";
+                                       Syn
+                                         (apps (Var "tail")
+                                            [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
+                                     ]) ) ) ) ) ) );
       typ =
         Pi
           ( "n",
@@ -754,19 +780,21 @@ let test_drop_wrong_base_case _ =
                       ( "v",
                         NatMatch
                           ( Var "k",
-                            Nil,
-                            "k'",
-                            Syn
-                              (apps (Var "drop")
-                                 [
-                                   sv "n";
-                                   sv "k'";
-                                   Syn
-                                     (apps (Var "tail")
-                                        [
-                                          Sum [ sv "n"; sv "k'"; Num 1 ]; sv "v";
-                                        ]);
-                                 ]) ) ) ) ) );
+                            Some Nil,
+                            Some
+                              ( "k'",
+                                Syn
+                                  (apps (Var "drop")
+                                     [
+                                       sv "n";
+                                       sv "k'";
+                                       Syn
+                                         (apps (Var "tail")
+                                            [
+                                              Sum [ sv "n"; sv "k'"; Num 1 ];
+                                              sv "v";
+                                            ]);
+                                     ]) ) ) ) ) ) );
       typ =
         Pi
           ( "n",
@@ -799,12 +827,14 @@ let test_dot _ =
                   ( "y",
                     NatMatch
                       ( Var "x",
-                        Num 0,
-                        "x'",
-                        Sum
-                          [
-                            Syn (apps (Var "times") [ sv "x'"; sv "y" ]); sv "y";
-                          ] ) ) ) );
+                        Some (Num 0),
+                        Some
+                          ( "x'",
+                            Sum
+                              [
+                                Syn (apps (Var "times") [ sv "x'"; sv "y" ]);
+                                sv "y";
+                              ] ) ) ) ) );
       typ = arrows [ Nat; Nat; Nat ];
     }
   in
@@ -861,10 +891,8 @@ let test_vmatch_unreachable_and_missing _ =
           | nil ->
             vmatch v2 with
             | nil -> nil
-            | cons n' x xs -> unreachable
           | cons n' x xs ->
             vmatch v2 with
-            | nil -> unreachable
             | cons n' y ys ->
               cons n' (x + y) (foo n' xs ys)
     *)
@@ -881,24 +909,25 @@ let test_vmatch_unreachable_and_missing _ =
                       ( "v2",
                         VecMatch
                           ( Var "v1",
-                            VecMatch
-                              (Var "v2", Nil, "n'", "x", "xs", Unreachable),
-                            "n'",
-                            "x",
-                            "xs",
-                            VecMatch
-                              ( Var "v2",
-                                Unreachable,
-                                "n'",
-                                "y",
-                                "ys",
-                                Cons
-                                  ( sv "n'",
-                                    Sum [ sv "x"; sv "y" ],
-                                    Syn
-                                      (apps (Var "foo")
-                                         [ sv "n'"; sv "xs"; sv "ys" ]) ) ) ) )
-                  ) ) );
+                            Some (VecMatch (Var "v2", Some Nil, None)),
+                            Some
+                              ( "n'",
+                                "x",
+                                "xs",
+                                VecMatch
+                                  ( Var "v2",
+                                    None,
+                                    Some
+                                      ( "n'",
+                                        "y",
+                                        "ys",
+                                        Cons
+                                          ( sv "n'",
+                                            Sum [ sv "x"; sv "y" ],
+                                            Syn
+                                              (apps (Var "foo")
+                                                 [ sv "n'"; sv "xs"; sv "ys" ])
+                                          ) ) ) ) ) ) ) ) );
       typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Vec (sv "n") ]);
     }
   in
@@ -918,7 +947,7 @@ let test_vmatch_nil_case_reachable_but_missing _ =
       body =
         Lam
           ( "n",
-            Lam ("v", VecMatch (Var "v", Unreachable, "n'", "x", "xs", sv "x"))
+            Lam ("v", VecMatch (Var "v", None, Some ("n'", "x", "xs", sv "x")))
           );
       typ = Pi ("n", Nat, arrow (Vec (sv "n")) Nat);
     }
@@ -938,7 +967,12 @@ let test_vmatch_nil_case_unreachable_but_implemented _ =
     {
       name = "head";
       body =
-        Lam ("n", Lam ("v", VecMatch (Var "v", Num 0, "n'", "x", "xs", sv "x")));
+        Lam
+          ( "n",
+            Lam
+              ( "v",
+                VecMatch (Var "v", Some (Num 0), Some ("n'", "x", "xs", sv "x"))
+              ) );
       typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) Nat);
     }
   in
@@ -954,15 +988,10 @@ let test_vmatch_cons_case_reachable_but_missing _ =
         \n.\v.
           vmatch v with
           | nil -> 0
-          | cons n' x xs -> unreachable
     *)
     {
       name = "foo";
-      body =
-        Lam
-          ( "n",
-            Lam ("v", VecMatch (Var "v", Num 0, "n'", "x", "xs", Unreachable))
-          );
+      body = Lam ("n", Lam ("v", VecMatch (Var "v", Some (Num 0), None)));
       typ = Pi ("n", Nat, arrow (Vec (sv "n")) Nat);
     }
   in
@@ -992,17 +1021,17 @@ let test_vmatch_cons_case_unreachable_but_implemented _ =
                   ( "v2",
                     VecMatch
                       ( Var "v1",
-                        VecMatch
-                          ( Var "v2",
-                            Nil,
-                            "n'",
-                            "x",
-                            "xs",
-                            Cons (sv "n'", sv "x", sv "xs") ),
-                        "n'",
-                        "x",
-                        "xs",
-                        Cons (sv "n'", sv "x", sv "xs") ) ) ) );
+                        Some
+                          (VecMatch
+                             ( Var "v2",
+                               Some Nil,
+                               Some
+                                 ( "n'",
+                                   "x",
+                                   "xs",
+                                   Cons (sv "n'", sv "x", sv "xs") ) )),
+                        Some ("n'", "x", "xs", Cons (sv "n'", sv "x", sv "xs"))
+                      ) ) ) );
       typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Vec (sv "n") ]);
     }
   in
