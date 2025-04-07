@@ -15,7 +15,7 @@ let head =
     body =
       Lam
         ("n", Lam ("v", VecMatch (Var "v", None, Some ("n", "x", "xs", sv "x"))));
-    typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) Nat);
+    typ = Pi ("n", Nat, arrow (Vec (LSum [ LVar "n"; LNum 1 ])) Nat);
   }
 
 let test_head _ = check_program [ head ]
@@ -34,7 +34,7 @@ let tail =
       Lam
         ( "n",
           Lam ("v", VecMatch (Var "v", None, Some ("n", "x", "xs", sv "xs"))) );
-    typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) (Vec (sv "n")));
+    typ = Pi ("n", Nat, arrow (Vec (LSum [ LVar "n"; LNum 1 ])) (Vec (LVar "n")));
   }
 
 let test_tail _ = check_program [ tail ]
@@ -59,9 +59,10 @@ let count_down =
                   Some Nil,
                   Some
                     ( "m",
-                      Cons (sv "m", sv "m", Syn (App (Var "count_down", sv "m")))
+                      Cons
+                        (LVar "m", sv "m", Syn (App (Var "count_down", sv "m")))
                     ) ) ) );
-    typ = Pi ("n", Nat, Vec (Syn (Var "n")));
+    typ = Pi ("n", Nat, Vec (LVar "n"));
   }
 
 let test_count_down _ = check_program [ count_down ]
@@ -84,13 +85,14 @@ let test_count_down_wrong_base_case _ =
               ( "n",
                 NatMatch
                   ( Var "n",
-                    Some (Cons (Num 0, Num 0, Nil)),
+                    Some (Cons (LNum 0, Num 0, Nil)),
                     Some
                       ( "m",
                         Cons
-                          (sv "m", sv "m", Syn (App (Var "count_down", sv "m")))
-                      ) ) ) );
-      typ = Pi ("n", Nat, Vec (Syn (Var "n")));
+                          ( LVar "m",
+                            sv "m",
+                            Syn (App (Var "count_down", sv "m")) ) ) ) ) );
+      typ = Pi ("n", Nat, Vec (LVar "n"));
     }
   in
   assert_raises
@@ -119,9 +121,10 @@ let test_count_down_wrong_step_case _ =
                     Some
                       ( "m",
                         Cons
-                          (sv "n", sv "m", Syn (App (Var "count_down", sv "n")))
-                      ) ) ) );
-      typ = Pi ("n", Nat, Vec (Syn (Var "n")));
+                          ( LVar "n",
+                            sv "m",
+                            Syn (App (Var "count_down", sv "n")) ) ) ) ) );
+      typ = Pi ("n", Nat, Vec (LVar "n"));
     }
   in
   assert_raises
@@ -155,20 +158,20 @@ let test_count_up _ =
                         Some
                           ( "n'",
                             Cons
-                              ( sv "n'",
+                              ( LVar "n'",
                                 sv "z",
                                 Syn
                                   (apps (Var "cnt")
                                      [ sv "n'"; Sum [ sv "z"; Num 1 ] ]) ) ) )
                   ) ) );
-      typ = Pi ("n", Nat, arrow Nat (Vec (sv "n")));
+      typ = Pi ("n", Nat, arrow Nat (Vec (LVar "n")));
     }
   in
   let count_up =
     {
       name = "count_up";
       body = Lam ("n", Syn (apps (Var "count_up_from") [ sv "n"; Num 0 ]));
-      typ = Pi ("n", Nat, Vec (sv "n"));
+      typ = Pi ("n", Nat, Vec (LVar "n"));
     }
   in
   check_program [ count_up_from; count_up ]
@@ -194,13 +197,14 @@ let test_map _ =
                                 "x",
                                 "xs",
                                 Cons
-                                  ( sv "m",
+                                  ( LVar "m",
                                     Syn (App (Var "f", sv "x")),
                                     Syn
                                       (apps (Var "map")
                                          [ sv "m"; sv "xs"; sv "f" ]) ) ) ) ) )
               ) );
-      typ = Pi ("n", Nat, arrows [ Vec (sv "n"); arrow Nat Nat; Vec (sv "n") ]);
+      typ =
+        Pi ("n", Nat, arrows [ Vec (LVar "n"); arrow Nat Nat; Vec (LVar "n") ]);
     }
   in
   check_program [ map ]
@@ -235,7 +239,8 @@ let foldl =
                                          sv "f";
                                        ]) ) ) ) ) ) ) );
     typ =
-      Pi ("n", Nat, arrows [ Vec (sv "n"); Nat; arrows [ Nat; Nat; Nat ]; Nat ]);
+      Pi
+        ("n", Nat, arrows [ Vec (LVar "n"); Nat; arrows [ Nat; Nat; Nat ]; Nat ]);
   }
 
 let vec_sum =
@@ -259,7 +264,7 @@ let vec_sum =
                      Num 0;
                      Lam ("a", Lam ("b", Sum [ sv "a"; sv "b" ]));
                    ]) ) );
-    typ = Pi ("n", Nat, arrow (Vec (sv "n")) Nat);
+    typ = Pi ("n", Nat, arrow (Vec (LVar "n")) Nat);
   }
 
 let test_foldl _ = check_program [ foldl; vec_sum ]
@@ -301,7 +306,9 @@ let test_foldr _ =
                                          ]) ) ) ) ) ) ) );
       typ =
         Pi
-          ("n", Nat, arrows [ Vec (sv "n"); Nat; arrows [ Nat; Nat; Nat ]; Nat ]);
+          ( "n",
+            Nat,
+            arrows [ Vec (LVar "n"); Nat; arrows [ Nat; Nat; Nat ]; Nat ] );
     }
   in
   check_program [ foldr ]
@@ -328,7 +335,7 @@ let concat =
                                   "x",
                                   "xs",
                                   Cons
-                                    ( Sum [ sv "n'"; sv "m" ],
+                                    ( LSum [ LVar "n'"; LVar "m" ],
                                       sv "x",
                                       Syn
                                         (apps (Var "concat")
@@ -342,8 +349,11 @@ let concat =
             ( "m",
               Nat,
               arrows
-                [ Vec (sv "n"); Vec (sv "m"); Vec (Sum [ sv "n"; sv "m" ]) ] )
-        );
+                [
+                  Vec (LVar "n");
+                  Vec (LVar "m");
+                  Vec (LSum [ LVar "n"; LVar "m" ]);
+                ] ) );
   }
 
 let test_concat _ =
@@ -352,7 +362,7 @@ let test_concat _ =
     {
       name = "ex0";
       body = Syn (apps (Var "concat") [ Num 0; Num 0; Nil; Nil ]);
-      typ = Vec (Num 0);
+      typ = Vec (LNum 0);
     }
   in
   let n = { name = "n"; body = Fix ("n", sv "n"); typ = Nat } in
@@ -370,7 +380,7 @@ let test_concat _ =
                Syn (App (Var "count_down", sv "n"));
                Syn (App (Var "count_down", sv "m"));
              ]);
-      typ = Vec (Sum [ sv "n"; sv "m" ]);
+      typ = Vec (LSum [ LVar "n"; LVar "m" ]);
     }
   in
   check_program [ count_down; concat; example_use_0; n; m; example_use_1 ]
@@ -395,7 +405,7 @@ let zip_with =
                               Some
                                 ( "m",
                                   Cons
-                                    ( sv "m",
+                                    ( LVar "m",
                                       Syn
                                         (apps (Var "f")
                                            [
@@ -424,7 +434,10 @@ let zip_with =
           Nat,
           arrows
             [
-              Vec (sv "n"); Vec (sv "n"); arrows [ Nat; Nat; Nat ]; Vec (sv "n");
+              Vec (LVar "n");
+              Vec (LVar "n");
+              arrows [ Nat; Nat; Nat ];
+              Vec (LVar "n");
             ] );
   }
 
@@ -437,7 +450,7 @@ let test_zip_with _ =
     {
       name = "ex0";
       body = Syn (apps (Var "zip_with") [ Num 0; Nil; Nil; plus ]);
-      typ = Vec (Num 0);
+      typ = Vec (LNum 0);
     }
   in
   let n = { name = "n"; body = Fix ("x", sv "x"); typ = Nat } in
@@ -455,7 +468,7 @@ let test_zip_with _ =
                Syn (App (Var "count_down", sv "n"));
                plus;
              ]);
-      typ = Vec (sv "n");
+      typ = Vec (LVar "n");
     }
   in
   let example_use_2 =
@@ -492,7 +505,7 @@ let test_zip_with _ =
                     ]);
                plus;
              ]);
-      typ = Vec (Sum [ sv "n"; sv "m"; Num 1 ]);
+      typ = Vec (LSum [ LVar "n"; LVar "m"; LNum 1 ]);
     }
   in
   check_program
@@ -511,22 +524,22 @@ let test_zip_with _ =
 
 let test_zip_with_wrong_size_0_vs_1 _ =
   let plus = Lam ("a", Lam ("b", Sum [ sv "a"; sv "b" ])) in
-  let v0 = { name = "v0"; body = Nil; typ = Vec (Num 0) } in
+  let v0 = { name = "v0"; body = Nil; typ = Vec (LNum 0) } in
   let v1 =
-    { name = "v1"; body = Cons (Num 0, Num 42, Nil); typ = Vec (Num 1) }
+    { name = "v1"; body = Cons (LNum 0, Num 42, Nil); typ = Vec (LNum 1) }
   in
   let zipped0 =
     {
       name = "zipped";
       body = Syn (apps (Var "zip_with") [ Num 0; sv "v0"; sv "v1"; plus ]);
-      typ = Vec (Num 0);
+      typ = Vec (LNum 0);
     }
   in
   let zipped1 =
     {
       name = "zipped";
       body = Syn (apps (Var "zip_with") [ Num 1; sv "v0"; sv "v1"; plus ]);
-      typ = Vec (Num 1);
+      typ = Vec (LNum 1);
     }
   in
   assert_raises
@@ -562,8 +575,10 @@ let test_zip_with_wrong_size_n_vs_m _ =
         Pi
           ( "n",
             Nat,
-            Pi ("m", Nat, arrows [ Vec (sv "n"); Vec (sv "m"); Vec (sv "n") ])
-          );
+            Pi
+              ( "m",
+                Nat,
+                arrows [ Vec (LVar "n"); Vec (LVar "m"); Vec (LVar "n") ] ) );
     }
   in
   let ex1 =
@@ -590,8 +605,10 @@ let test_zip_with_wrong_size_n_vs_m _ =
         Pi
           ( "n",
             Nat,
-            Pi ("m", Nat, arrows [ Vec (sv "n"); Vec (sv "m"); Vec (sv "m") ])
-          );
+            Pi
+              ( "m",
+                Nat,
+                arrows [ Vec (LVar "n"); Vec (LVar "m"); Vec (LVar "m") ] ) );
     }
   in
   assert_raises
@@ -629,7 +646,7 @@ let take =
                           Some
                             ( "k'",
                               Cons
-                                ( sv "k'",
+                                ( LVar "k'",
                                   Syn
                                     (apps (Var "head")
                                        [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
@@ -648,7 +665,10 @@ let take =
       Pi
         ( "n",
           Nat,
-          Pi ("k", Nat, arrow (Vec (Sum [ sv "n"; sv "k" ])) (Vec (sv "k"))) );
+          Pi
+            ( "k",
+              Nat,
+              arrow (Vec (LSum [ LVar "n"; LVar "k" ])) (Vec (LVar "k")) ) );
   }
 
 let test_take _ = check_program [ head; tail; take ]
@@ -682,7 +702,7 @@ let test_take_wrong_base_case _ =
                             Some
                               ( "k'",
                                 Cons
-                                  ( sv "k'",
+                                  ( LVar "k'",
                                     Syn
                                       (apps (Var "head")
                                          [ Sum [ sv "n"; sv "k'" ]; sv "v" ]),
@@ -702,8 +722,10 @@ let test_take_wrong_base_case _ =
         Pi
           ( "n",
             Nat,
-            Pi ("k", Nat, arrow (Vec (Sum [ sv "n"; sv "k" ])) (Vec (sv "k")))
-          );
+            Pi
+              ( "k",
+                Nat,
+                arrow (Vec (LSum [ LVar "n"; LVar "k" ])) (Vec (LVar "k")) ) );
     }
   in
   assert_raises (Type_error "Term 'v' does not have the expected type 'Vec k'.")
@@ -747,8 +769,10 @@ let test_drop _ =
         Pi
           ( "n",
             Nat,
-            Pi ("k", Nat, arrow (Vec (Sum [ sv "k"; sv "n" ])) (Vec (sv "n")))
-          );
+            Pi
+              ( "k",
+                Nat,
+                arrow (Vec (LSum [ LVar "k"; LVar "n" ])) (Vec (LVar "n")) ) );
     }
   in
   check_program [ head; tail; drop ]
@@ -799,8 +823,10 @@ let test_drop_wrong_base_case _ =
         Pi
           ( "n",
             Nat,
-            Pi ("k", Nat, arrow (Vec (Sum [ sv "k"; sv "n" ])) (Vec (sv "n")))
-          );
+            Pi
+              ( "k",
+                Nat,
+                arrow (Vec (LSum [ LVar "k"; LVar "n" ])) (Vec (LVar "n")) ) );
     }
   in
   assert_raises
@@ -861,7 +887,7 @@ let test_dot _ =
                              (apps (Var "zip_with")
                                 [ sv "n"; sv "v1"; sv "v2"; sv "times" ]);
                          ]) ) ) );
-      typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Nat ]);
+      typ = Pi ("n", Nat, arrows [ Vec (LVar "n"); Vec (LVar "n"); Nat ]);
     }
   in
   check_program [ head; tail; foldl; vec_sum; zip_with; times; dot ]
@@ -877,7 +903,8 @@ let test_first_half _ =
       name = "first_half";
       body =
         Lam ("n", Lam ("v", Syn (apps (Var "take") [ sv "n"; sv "n"; sv "v" ])));
-      typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; sv "n" ])) (Vec (sv "n")));
+      typ =
+        Pi ("n", Nat, arrow (Vec (LSum [ LVar "n"; LVar "n" ])) (Vec (LVar "n")));
     }
   in
   check_program [ head; tail; take; first_half ]
@@ -922,13 +949,14 @@ let test_vmatch_unreachable_and_missing _ =
                                         "y",
                                         "ys",
                                         Cons
-                                          ( sv "n'",
+                                          ( LVar "n'",
                                             Sum [ sv "x"; sv "y" ],
                                             Syn
                                               (apps (Var "foo")
                                                  [ sv "n'"; sv "xs"; sv "ys" ])
                                           ) ) ) ) ) ) ) ) );
-      typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Vec (sv "n") ]);
+      typ =
+        Pi ("n", Nat, arrows [ Vec (LVar "n"); Vec (LVar "n"); Vec (LVar "n") ]);
     }
   in
   check_program [ foo ]
@@ -949,7 +977,7 @@ let test_vmatch_nil_case_reachable_but_missing _ =
           ( "n",
             Lam ("v", VecMatch (Var "v", None, Some ("n'", "x", "xs", sv "x")))
           );
-      typ = Pi ("n", Nat, arrow (Vec (sv "n")) Nat);
+      typ = Pi ("n", Nat, arrow (Vec (LVar "n")) Nat);
     }
   in
   assert_raises (Type_error "The nil branch is reachable but not implemented.")
@@ -973,7 +1001,7 @@ let test_vmatch_nil_case_unreachable_but_implemented _ =
               ( "v",
                 VecMatch (Var "v", Some (Num 0), Some ("n'", "x", "xs", sv "x"))
               ) );
-      typ = Pi ("n", Nat, arrow (Vec (Sum [ sv "n"; Num 1 ])) Nat);
+      typ = Pi ("n", Nat, arrow (Vec (LSum [ LVar "n"; LNum 1 ])) Nat);
     }
   in
   assert_raises
@@ -992,7 +1020,7 @@ let test_vmatch_cons_case_reachable_but_missing _ =
     {
       name = "foo";
       body = Lam ("n", Lam ("v", VecMatch (Var "v", Some (Num 0), None)));
-      typ = Pi ("n", Nat, arrow (Vec (sv "n")) Nat);
+      typ = Pi ("n", Nat, arrow (Vec (LVar "n")) Nat);
     }
   in
   assert_raises (Type_error "The cons branch is reachable but not implemented.")
@@ -1029,10 +1057,11 @@ let test_vmatch_cons_case_unreachable_but_implemented _ =
                                  ( "n'",
                                    "x",
                                    "xs",
-                                   Cons (sv "n'", sv "x", sv "xs") ) )),
-                        Some ("n'", "x", "xs", Cons (sv "n'", sv "x", sv "xs"))
+                                   Cons (LVar "n'", sv "x", sv "xs") ) )),
+                        Some ("n'", "x", "xs", Cons (LVar "n'", sv "x", sv "xs"))
                       ) ) ) );
-      typ = Pi ("n", Nat, arrows [ Vec (sv "n"); Vec (sv "n"); Vec (sv "n") ]);
+      typ =
+        Pi ("n", Nat, arrows [ Vec (LVar "n"); Vec (LVar "n"); Vec (LVar "n") ]);
     }
   in
   assert_raises
