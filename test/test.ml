@@ -1135,6 +1135,71 @@ let test_shadow_in_vmatch _ =
   assert_raises (Type_error "The zero branch is reachable but not implemented.")
     (fun _ -> check_program [ foo ])
 
+let test_is_empty _ =
+  let is_empty =
+    (*
+      let is_empty : Pi (n:Nat) . Vec n -> Bool =
+        \n.\v.
+          vmatch v with
+          | nil -> true
+          | cons n' x xs -> false
+    *)
+    {
+      name = "is_empty";
+      body =
+        Lam
+          ( "n",
+            Lam
+              ("v", VecMatch (Var "v", Some True, Some ("n'", "x", "xs", False)))
+          );
+      typ = Pi ("n", Nat, arrow (Vec (LVar "n")) Bool);
+    }
+  in
+  check_program [ is_empty ]
+
+let test_bool2vec _ =
+  let bool2vec =
+    (*
+      let bool2vec : Bool -> Vec 1 =
+        \b.
+          bmatch b with
+          | true  -> [1]
+          | false -> [0]
+    *)
+    {
+      name = "bool2vec";
+      body =
+        Lam
+          ( "b",
+            BoolMatch
+              (Var "b", Cons (LNum 0, Num 1, Nil), Cons (LNum 0, Num 0, Nil)) );
+      typ = arrow Bool (Vec (LNum 1));
+    }
+  in
+  let example0 =
+    {
+      name = "ex0";
+      body = Syn (App (Var "bool2vec", False));
+      typ = Vec (LNum 1);
+    }
+  in
+  let example1 =
+    {
+      name = "ex1";
+      body = Syn (App (Var "bool2vec", True));
+      typ = Vec (LNum 1);
+    }
+  in
+  let b = { name = "b"; body = True; typ = Bool } in
+  let example2 =
+    {
+      name = "ex2";
+      body = Syn (App (Var "bool2vec", sv "b"));
+      typ = Vec (LNum 1);
+    }
+  in
+  check_program [ bool2vec; example0; example1; b; example2 ]
+
 let tests =
   "typecheck"
   >::: [
@@ -1169,6 +1234,8 @@ let tests =
          "shadowing-at-toplevel" >:: test_shadow_toplevel;
          "shadowing-in-nmatch" >:: test_shadow_in_nmatch;
          "shadowing-in-vmatch" >:: test_shadow_in_vmatch;
+         "is_empty" >:: test_is_empty;
+         "bool2vec" >:: test_bool2vec;
        ]
 
 let _ = run_test_tt_main tests

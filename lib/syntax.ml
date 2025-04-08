@@ -12,7 +12,10 @@ and chk_tm =
   | Sum of chk_tm list
   | Nil
   | Cons of (len (* length of tail *) * chk_tm (* head *) * chk_tm (* tail *))
+  | True
+  | False
   | Syn of syn_tm
+  (* TODO: Need to check that variable names are all distinct? *)
   | VecMatch of
       (syn_tm (* list to match on *)
       * chk_tm option (* expression for the nil case *)
@@ -27,8 +30,12 @@ and chk_tm =
       * (string (* name for the predecessor *)
         * chk_tm (* expression for the non-zero case *))
         option)
+  | BoolMatch of
+      (syn_tm (* bool to match on *)
+      * chk_tm (* expression for the true case *)
+      * chk_tm (* expression for the false case *))
 
-type tp = Nat | Vec of len | Pi of string * tp * tp
+type tp = Bool | Nat | Vec of len | Pi of string * tp * tp
 type decl = { name : string; body : chk_tm; typ : tp }
 type program = decl list
 
@@ -136,6 +143,11 @@ and string_of_chk_tm (t : chk_tm) : string =
         | _ -> "(" ^ string_of_len n ^ ")"
       in
       "cons " ^ n_str ^ " " ^ with_parens x ^ " " ^ with_parens xs
+  | True -> "true"
+  | False -> "false"
+  | BoolMatch (s, tt, tf) ->
+      "bmatch " ^ string_of_syn_tm s ^ " with | true -> " ^ string_of_chk_tm tt
+      ^ " | false -> " ^ string_of_chk_tm tf
   | Syn s -> string_of_syn_tm s
   | NatMatch (s, t0, t1) ->
       let str1 = "nmatch " ^ string_of_syn_tm s ^ " with" in
@@ -248,10 +260,16 @@ let%test _ =
   let expected = "vmatch v with | nil -> 0 | cons n' x xs -> 1" in
   actual = expected
 
+let%test _ =
+  let actual = string_of_chk_tm (BoolMatch (Var "s", False, True)) in
+  let expected = "bmatch s with | true -> false | false -> true" in
+  actual = expected
+
 (** Convert a type to a string. *)
 let rec string_of_tp (t : tp) : string =
   match t with
   | Nat -> "Nat"
+  | Bool -> "Bool"
   | Vec n ->
       let should_parenthesize =
         match n with LNum _ | LVar _ -> false | _ -> true

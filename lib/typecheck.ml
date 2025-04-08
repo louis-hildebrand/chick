@@ -87,6 +87,7 @@ let rec len_subst (n : len) (x : string) (n' : len) : len =
 (** Perform [t/x]T on the type [T]. *)
 let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
   match typ with
+  | Bool -> Bool
   | Nat -> Nat
   | Vec n -> (
       match len_of_tm t with
@@ -158,6 +159,13 @@ let rec chk_tm_rename (x' : string) (x : string) (t : chk_tm) : chk_tm =
   | Nil -> Nil
   | Cons (n, y, ys) ->
       Cons (len_rename x' x n, chk_tm_rename x' x y, chk_tm_rename x' x ys)
+  | False -> False
+  | True -> True
+  | BoolMatch (s, tt, tf) ->
+      let s' = syn_tm_rename x' x s in
+      let tt' = chk_tm_rename x' x tt in
+      let tf' = chk_tm_rename x' x tf in
+      BoolMatch (s', tt', tf')
   | NatMatch (s, t0, t1) ->
       let s' = syn_tm_rename x' x s in
       let t0' = Option.map (chk_tm_rename x' x) t0 in
@@ -393,6 +401,7 @@ let%test _ =
 let rec tp_eq (t1 : tp) (t2 : tp) (delta : equation list) : bool =
   match (t1, t2) with
   | Nat, Nat -> true
+  | Bool, Bool -> true
   | Vec t1', Vec t2' -> same_size t1' t2' delta
   | Pi (x, tpA, tpB), Pi (y, tpC, tpD) ->
       (* Change the vars x and y into a fresh unseen variable just for the sake of the comparison *)
@@ -440,6 +449,9 @@ let%test _ =
   tp_eq (Vec (LVar "x")) (Vec (LVar "y"))
     [ mk_equation (LSum [ LVar "x"; LNum 1 ], LSum [ LVar "y"; LNum 1 ]) ]
 
+let%test _ = tp_eq Bool Bool []
+let%test _ = not (tp_eq Bool Nat [])
+
 (** Check that, in context [gamma], [n] has type [Nat]. *)
 let rec check_len_nat (gamma : context) (n : len) =
   match n with
@@ -470,6 +482,11 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
       check_len_nat gamma len;
       check gamma delta head Nat;
       check gamma delta tail (Vec len)
+  | False, Bool -> ()
+  | True, Bool -> ()
+  | BoolMatch (s, tt, tf), typ when synth gamma delta s = Bool ->
+      check gamma delta tt typ;
+      check gamma delta tf typ
   | NatMatch (s, zero_case, succ_case), typ when synth gamma delta s = Nat -> (
       match len_of_tm (Syn s) with
       | Some n ->
