@@ -130,6 +130,265 @@ let%test _ =
   let expected = Pi ("#4", Vec (LNum 0), Vec (LNum 1)) in
   actual = expected
 
+(** Perform [[x'/x] n] on the length [n]. *)
+let rec len_rename (x' : string) (x : string) (n : len) : len =
+  match n with
+  | LNum k -> LNum k
+  | LVar y when y = x -> LVar x'
+  | LVar y -> LVar y
+  | LSum terms -> LSum (terms |> List.map (len_rename x' x))
+
+(** Perform [[x'/x] t] on the checkable term [t]. *)
+let rec chk_tm_rename (x' : string) (x : string) (t : chk_tm) : chk_tm =
+  match t with
+  | Lam (y, _) when y = x -> t
+  | Lam (y, t) ->
+      (* Rename to avoid variable capture. *)
+      let y' = get_fresh_var () in
+      let t' = chk_tm_rename x' x (chk_tm_rename y' y t) in
+      Lam (y', t')
+  | Fix (y, _) when y = x -> t
+  | Fix (y, t) ->
+      (* Rename to avoid variable capture. *)
+      let y' = get_fresh_var () in
+      let t' = chk_tm_rename x' x (chk_tm_rename y' y t) in
+      Fix (y', t')
+  | Num k -> Num k
+  | Sum terms -> Sum (terms |> List.map (chk_tm_rename x' x))
+  | Nil -> Nil
+  | Cons (n, y, ys) ->
+      Cons (len_rename x' x n, chk_tm_rename x' x y, chk_tm_rename x' x ys)
+  | NatMatch (s, t0, t1) ->
+      let s' = syn_tm_rename x' x s in
+      let t0' = Option.map (chk_tm_rename x' x) t0 in
+      let t1' =
+        Option.map
+          (fun (y, t) ->
+            if y = x then (y, t)
+            else
+              (* Rename to avoid variable capture. *)
+              let y' = get_fresh_var () in
+              let t' = chk_tm_rename x' x (chk_tm_rename y' y t) in
+              (y', t'))
+          t1
+      in
+      NatMatch (s', t0', t1')
+  | VecMatch (s, t0, t1) ->
+      let s' = syn_tm_rename x' x s in
+      let t0' = Option.map (chk_tm_rename x' x) t0 in
+      let t1' =
+        Option.map
+          (fun (y1, y2, y3, t) ->
+            if List.mem x [ y1; y2; y3 ] then (y1, y2, y3, t)
+            else
+              (* Rename to avoid variable capture. *)
+              let y1' = get_fresh_var () in
+              let y2' = get_fresh_var () in
+              let y3' = get_fresh_var () in
+              let t' =
+                chk_tm_rename x' x
+                  (chk_tm_rename y3' y3
+                     (chk_tm_rename y2' y2 (chk_tm_rename y1' y1 t)))
+              in
+              (y1', y2', y3', t'))
+          t1
+      in
+      VecMatch (s', t0', t1')
+  | Syn s -> Syn (syn_tm_rename x' x s)
+
+(** Perform [[x'/x] s] on the synthesizable term [s]. *)
+and syn_tm_rename (x' : string) (x : string) (s : syn_tm) : syn_tm =
+  match s with
+  | Var y when y = x -> Var x'
+  | Var y -> Var y
+  | App (s, t) -> App (syn_tm_rename x' x s, chk_tm_rename x' x t)
+
+(* unit tests for chk_tm_rename and syn_tm_rename *)
+let%test _ =
+  let actual =
+    syn_tm_rename "g" "f" (apps (Var "f") [ sv "x"; sv "y"; sv "z" ])
+  in
+  let expected = apps (Var "g") [ sv "x"; sv "y"; sv "z" ] in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Lam ("x", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Lam ("x", Sum [ sv "x"; sv "x'"; sv "y" ]) in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Lam ("x'", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Lam ("#0", Sum [ sv "x'"; sv "#0"; sv "y" ]) in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Lam ("y", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Lam ("#1", Sum [ sv "x'"; sv "x'"; sv "#1" ]) in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Fix ("x", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Fix ("x", Sum [ sv "x"; sv "x'"; sv "y" ]) in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Fix ("x'", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Fix ("#0", Sum [ sv "x'"; sv "#0"; sv "y" ]) in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Fix ("y", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Fix ("#1", Sum [ sv "x'"; sv "x'"; sv "#1" ]) in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "z'" "z"
+      (NatMatch
+         (Var "z", Some (sv "z"), Some ("z", Sum [ sv "z"; sv "z'"; sv "w" ])))
+  in
+  let expected =
+    NatMatch
+      (Var "z'", Some (sv "z'"), Some ("z", Sum [ sv "z"; sv "z'"; sv "w" ]))
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "z'" "z"
+      (NatMatch (Var "s", None, Some ("z'", Sum [ sv "z"; sv "z'"; sv "w" ])))
+  in
+  let expected =
+    NatMatch (Var "s", None, Some ("#0", Sum [ sv "z'"; sv "#0"; sv "w" ]))
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "z'" "z"
+      (NatMatch (Var "s", None, Some ("w", Sum [ sv "z"; sv "z'"; sv "w" ])))
+  in
+  let expected =
+    NatMatch (Var "s", None, Some ("#1", Sum [ sv "z'"; sv "z'"; sv "#1" ]))
+  in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "new" "y1"
+      (VecMatch
+         ( Var "y1",
+           Some (sv "y1"),
+           Some
+             ( "y1",
+               "y2",
+               "y3",
+               Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) ))
+  in
+  let expected =
+    VecMatch
+      ( Var "new",
+        Some (sv "new"),
+        Some
+          ( "y1",
+            "y2",
+            "y3",
+            Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) )
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "new" "y2"
+      (VecMatch
+         ( Var "y2",
+           Some (sv "y2"),
+           Some
+             ( "y1",
+               "y2",
+               "y3",
+               Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) ))
+  in
+  let expected =
+    VecMatch
+      ( Var "new",
+        Some (sv "new"),
+        Some
+          ( "y1",
+            "y2",
+            "y3",
+            Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) )
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "new" "y3"
+      (VecMatch
+         ( Var "y3",
+           Some (sv "y3"),
+           Some
+             ( "y1",
+               "y2",
+               "y3",
+               Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) ))
+  in
+  let expected =
+    VecMatch
+      ( Var "new",
+        Some (sv "new"),
+        Some
+          ( "y1",
+            "y2",
+            "y3",
+            Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) )
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "y1" "x"
+      (VecMatch
+         ( Var "s",
+           None,
+           Some
+             ( "y1",
+               "y2",
+               "y3",
+               Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) ))
+  in
+  let expected =
+    VecMatch
+      ( Var "s",
+        None,
+        Some
+          ( "#0",
+            "#1",
+            "#2",
+            Syn (apps (Var "f") [ sv "#0"; sv "#1"; sv "#2"; sv "y1" ]) ) )
+  in
+  actual = expected
+
 (** Check whether the types [t1] and [t2] are equal. *)
 let rec tp_eq (t1 : tp) (t2 : tp) (delta : equation list) : bool =
   match (t1, t2) with
@@ -246,16 +505,33 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
                 raise
                   (Type_error
                      "The succ branch is reachable but not implemented.")
-            | Some (pred_name, t), true ->
-                let succ = LSum [ LVar pred_name; LNum 1 ] in
-                let gamma' = gamma |> Context.add pred_name Nat in
-                let delta' = mk_equation (n, succ) :: delta in
+            | Some (y, t), true ->
+                (* y may shadow another variable, which can lead to
+                   contradictory equations (e.g., n = n + 1, where the n's are
+                   actually different)! *)
+                let is_shadowing =
+                  List.exists
+                    (fun n -> StringSet.mem y (vars n))
+                    (n :: List.concat [ List.map fst delta; List.map snd delta ])
+                in
+                let y, t =
+                  if is_shadowing then
+                    let y' = get_fresh_var () in
+                    let t' = chk_tm_rename y' y t in
+                    (y', t')
+                  else (y, t)
+                in
+                let gamma' = gamma |> Context.add y Nat in
+                let delta' =
+                  mk_equation (n, LSum [ LVar y; LNum 1 ]) :: delta
+                in
                 check gamma' delta' t typ
-            | Some _, false ->
+            | Some (y, t), false ->
                 raise
                   (Type_error
-                     "The succ branch is unreachable and should therefore be \
-                      left unimplemented.")
+                     ("The succ branch (" ^ y ^ " -> " ^ string_of_chk_tm t
+                    ^ ") is unreachable and should therefore be left \
+                       unimplemented."))
           in
           check_zero_case ();
           check_succ_case ()
@@ -298,13 +574,27 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
                 raise
                   (Type_error
                      "The cons branch is reachable but not implemented.")
-            | Some (len_name, head_name, tail_name, t), true ->
-                let gamma' =
-                  gamma |> Context.add len_name Nat |> Context.add head_name Nat
-                  |> Context.add tail_name (Vec (LVar len_name))
+            | Some (y1, y2, y3, t), true ->
+                (* y1 may shadow an existing variable! *)
+                let is_shadowing =
+                  List.exists
+                    (fun n -> StringSet.mem y1 (vars n))
+                    (n :: List.concat [ List.map fst delta; List.map snd delta ])
                 in
-                let succ = LSum [ LVar len_name; LNum 1 ] in
-                let delta' = mk_equation (n, succ) :: delta in
+                let y1, t =
+                  if is_shadowing then
+                    let y1' = get_fresh_var () in
+                    let t' = chk_tm_rename y1' y1 t in
+                    (y1', t')
+                  else (y1, t)
+                in
+                let gamma' =
+                  gamma |> Context.add y1 Nat |> Context.add y2 Nat
+                  |> Context.add y3 (Vec (LVar y1))
+                in
+                let delta' =
+                  mk_equation (n, LSum [ LVar y1; LNum 1 ]) :: delta
+                in
                 check gamma' delta' t typ
             | Some _, false ->
                 raise

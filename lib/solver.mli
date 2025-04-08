@@ -1,4 +1,4 @@
-type equation
+type equation = Syntax.len * Syntax.len
 (** An equality between lengths. *)
 
 val mk_equation : (Syntax.len * Syntax.len) -> equation

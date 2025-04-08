@@ -1069,6 +1069,72 @@ let test_vmatch_cons_case_unreachable_but_implemented _ =
        "The cons branch is unreachable and should therefore be left \
         unimplemented.") (fun _ -> check_program [ foo ])
 
+let test_shadow_toplevel _ =
+  let foo1 = { name = "foo"; body = Lam ("x", sv "x"); typ = arrow Nat Nat } in
+  let foo2 = { name = "foo"; body = Num 42; typ = Nat } in
+  let bar = { name = "bar"; body = Sum [ sv "foo"; Num 0 ]; typ = Nat } in
+  check_program [ foo1; foo2; bar ]
+
+let test_shadow_in_nmatch _ =
+  let foo =
+    (*
+      let foo : Nat -> Nat =
+        \n.
+          nmatch n with
+          | 0 -> 0
+          | n + 1 ->
+            nmatch n with
+            | 0 -> unreachable  // <-- But it is reachable!
+            | n' + 1 -> 1
+    *)
+    {
+      name = "foo";
+      body =
+        Lam
+          ( "n",
+            NatMatch
+              ( Var "n",
+                Some (Num 0),
+                Some ("n", NatMatch (Var "n", None, Some ("n'", Num 1))) ) );
+      typ = arrow Nat Nat;
+    }
+  in
+  assert_raises (Type_error "The zero branch is reachable but not implemented.")
+    (fun _ -> check_program [ foo ])
+
+let test_shadow_in_vmatch _ =
+  let foo =
+    (*
+      let foo : Pi (n:Nat) . Vec n -> Nat =
+        \n.\v.
+          vmatch v with
+          | nil -> 0
+          | cons n x xs ->
+            nmatch n with
+            | 0 -> unreachable  // <-- But it is reachable!
+            | n' + 1 -> 1
+    *)
+    {
+      name = "foo";
+      body =
+        Lam
+          ( "n",
+            Lam
+              ( "v",
+                VecMatch
+                  ( Var "v",
+                    Some (Num 0),
+                    Some
+                      ( "n",
+                        "x",
+                        "xs",
+                        NatMatch (Var "n", None, Some ("n'", Num 1)) ) ) ) );
+      typ = Pi ("n", Nat, arrow (Vec (LVar "n")) Nat);
+    }
+  in
+  assert_raises (Type_error "The zero branch is reachable but not implemented.")
+    (fun _ -> check_program [ foo ])
+
 let tests =
   "typecheck"
   >::: [
@@ -1100,6 +1166,9 @@ let tests =
          >:: test_vmatch_cons_case_reachable_but_missing;
          "vmatch-cons-unreachable-implemented"
          >:: test_vmatch_cons_case_unreachable_but_implemented;
+         "shadowing-at-toplevel" >:: test_shadow_toplevel;
+         "shadowing-in-nmatch" >:: test_shadow_in_nmatch;
+         "shadowing-in-vmatch" >:: test_shadow_in_vmatch;
        ]
 
 let _ = run_test_tt_main tests
