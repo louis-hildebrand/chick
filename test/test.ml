@@ -1200,6 +1200,151 @@ let test_bool2vec _ =
   in
   check_program [ bool2vec; example0; example1; b; example2 ]
 
+let test_fst_nat _ =
+  let fst =
+    (*
+      let fst_nat : (Nat * Nat) -> Nat =
+        \p.pmatch p with
+           | (y, _) -> y
+    *)
+    {
+      name = "fst_nat";
+      body = Lam ("p", PairMatch (Var "p", "y", "_", sv "y"));
+      typ = arrow (times Nat Nat) Nat;
+    }
+  in
+  let foo =
+    { name = "foo"; body = Pair (Num 42, Num 99); typ = times Nat Nat }
+  in
+  let bar =
+    { name = "bar"; body = Syn (App (Var "fst_nat", sv "foo")); typ = Nat }
+  in
+  check_program [ fst; foo; bar ]
+
+let test_snd_nat _ =
+  let snd =
+    (*
+      let snd_nat : (Nat * Nat) -> Nat =
+        \p.pmatch p with
+           | (_, y) -> y
+    *)
+    {
+      name = "snd_nat";
+      body = Lam ("p", PairMatch (Var "p", "_", "y", sv "y"));
+      typ = arrow (times Nat Nat) Nat;
+    }
+  in
+  let foo =
+    { name = "foo"; body = Pair (Num 42, Num 99); typ = times Nat Nat }
+  in
+  let bar =
+    { name = "bar"; body = Syn (App (Var "snd_nat", sv "foo")); typ = Nat }
+  in
+  check_program [ snd; foo; bar ]
+
+let test_nat_bool_pair _ =
+  let foo =
+    { name = "foo"; body = Pair (Num 42, True); typ = times Nat Bool }
+  in
+  check_program [ foo ]
+
+let test_dependent_vec_pair _ =
+  let foo =
+    {
+      name = "foo";
+      body = Pair (Num 42, Syn (App (Var "count_down", Num 42)));
+      typ = Sigma ("n", Nat, Vec (LVar "n"));
+    }
+  in
+  check_program [ count_down; foo ]
+
+let test_dependent_vec_pair_wrong_size _ =
+  let foo =
+    {
+      name = "foo";
+      body = Pair (Num 42, Syn (App (Var "count_down", Num 43)));
+      typ = Sigma ("n", Nat, Vec (LVar "n"));
+    }
+  in
+  assert_raises
+    (Type_error "Term 'count_down 43' does not have the expected type 'Vec 42'.")
+    (fun _ -> check_program [ count_down; foo ])
+
+let test_filter _ =
+  (* TODO: What if I used n instead of m for the output size? *)
+  let filter =
+    (*
+      let filter : Pi (n:Nat) . Vec n -> (Nat -> Bool) -> (Sigma (m:Nat) . Vec m) =
+        fix filter.\n.\v.\f.
+          \vmatch v with
+          | nil -> (0, nil)
+          | cons n' x xs ->
+            bmatch f x with
+            | true ->
+              pmatch (filter n' xs f) with
+              | (m, xs') -> (m + 1, cons m x xs')
+            | false ->
+              filter n' xs f
+    *)
+    {
+      name = "filter";
+      body =
+        Fix
+          ( "filter",
+            Lam
+              ( "n",
+                Lam
+                  ( "v",
+                    Lam
+                      ( "f",
+                        VecMatch
+                          ( Var "v",
+                            Some (Pair (Num 0, Nil)),
+                            Some
+                              ( "n'",
+                                "x",
+                                "xs",
+                                BoolMatch
+                                  ( App (Var "f", sv "x"),
+                                    PairMatch
+                                      ( apps (Var "filter")
+                                          [ sv "n'"; sv "xs"; sv "f" ],
+                                        "m",
+                                        "xs'",
+                                        Pair
+                                          ( Sum [ sv "m"; Num 1 ],
+                                            Cons (LVar "m", sv "x", sv "xs'") )
+                                      ),
+                                    Syn
+                                      (apps (Var "filter")
+                                         [ sv "n'"; sv "xs"; sv "f" ]) ) ) ) )
+                  ) ) );
+      typ =
+        Pi
+          ( "n",
+            Nat,
+            arrows
+              [
+                Vec (LVar "n"); arrow Nat Bool; Sigma ("m", Nat, Vec (LVar "m"));
+              ] );
+    }
+  in
+  let example0 =
+    (*
+      let ex0 : Sigma (n:Nat) . Vec n =
+        filter 42 (count_down 42) (\x.true)
+    *)
+    {
+      name = "ex0";
+      body =
+        Syn
+          (apps (Var "filter")
+             [ Num 42; Syn (App (Var "count_down", Num 42)); Lam ("_", True) ]);
+      typ = Sigma ("n", Nat, Vec (LVar "n"));
+    }
+  in
+  check_program [ filter; count_down; example0 ]
+
 let tests =
   "typecheck"
   >::: [
@@ -1236,6 +1381,12 @@ let tests =
          "shadowing-in-vmatch" >:: test_shadow_in_vmatch;
          "is_empty" >:: test_is_empty;
          "bool2vec" >:: test_bool2vec;
+         "fst_nat" >:: test_fst_nat;
+         "snd_nat" >:: test_snd_nat;
+         "Nat * Bool" >:: test_nat_bool_pair;
+         "dependent-vec-pair:ok" >:: test_dependent_vec_pair;
+         "dependent-vec-pair:wrong size" >:: test_dependent_vec_pair_wrong_size;
+         "filter" >:: test_filter;
        ]
 
 let _ = run_test_tt_main tests

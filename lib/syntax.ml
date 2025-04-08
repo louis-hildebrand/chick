@@ -14,6 +14,7 @@ and chk_tm =
   | Cons of (len (* length of tail *) * chk_tm (* head *) * chk_tm (* tail *))
   | True
   | False
+  | Pair of chk_tm * chk_tm
   | Syn of syn_tm
   (* TODO: Need to check that variable names are all distinct? *)
   | VecMatch of
@@ -34,8 +35,20 @@ and chk_tm =
       (syn_tm (* bool to match on *)
       * chk_tm (* expression for the true case *)
       * chk_tm (* expression for the false case *))
+  | PairMatch of
+      (* TODO: Need to check that variables names are distinct? *)
+      (syn_tm (* pair to match on *)
+      * string (* name for fst *)
+      * string (* name for snd *)
+      * chk_tm (* output *))
 
-type tp = Bool | Nat | Vec of len | Pi of string * tp * tp
+type tp =
+  | Bool
+  | Nat
+  | Vec of len
+  | Pi of string * tp * tp (* dependent function type (x : A1) -> A2 *)
+  | Sigma of string * tp * tp (* dependent pair type (x : A1) * A2 *)
+
 type decl = { name : string; body : chk_tm; typ : tp }
 type program = decl list
 
@@ -65,6 +78,11 @@ let rec vars (n : len) : str_set =
 let arrow (t1 : tp) (t2 : tp) : tp = Pi ("_", t1, t2)
 
 let%test _ = arrow Nat Nat = Pi ("_", Nat, Nat)
+
+(** Shorthand for the type of a non-dependent pair. *)
+let times (t1 : tp) (t2 : tp) : tp = Sigma ("_", t1, t2)
+
+let%test _ = times Nat Nat = Sigma ("_", Nat, Nat)
 
 (** Shorthand for a chain of arrows. *)
 let rec arrows (ts : tp list) : tp =
@@ -109,7 +127,9 @@ let rec string_of_syn_tm (t : syn_tm) : string =
   | App (s, t) ->
       let lhs = string_of_syn_tm s in
       let rhs =
-        match t with Syn (Var x) -> x | _ -> "(" ^ string_of_chk_tm t ^ ")"
+        match t with
+        | Syn (Var _) | Num _ -> string_of_chk_tm t
+        | _ -> "(" ^ string_of_chk_tm t ^ ")"
       in
       lhs ^ " " ^ rhs
 
@@ -145,6 +165,8 @@ and string_of_chk_tm (t : chk_tm) : string =
       "cons " ^ n_str ^ " " ^ with_parens x ^ " " ^ with_parens xs
   | True -> "true"
   | False -> "false"
+  | Pair (t1, t2) ->
+      "(" ^ string_of_chk_tm t1 ^ ", " ^ string_of_chk_tm t2 ^ ")"
   | BoolMatch (s, tt, tf) ->
       "bmatch " ^ string_of_syn_tm s ^ " with | true -> " ^ string_of_chk_tm tt
       ^ " | false -> " ^ string_of_chk_tm tf
@@ -177,8 +199,12 @@ and string_of_chk_tm (t : chk_tm) : string =
             ^ string_of_chk_tm t1
       in
       str3
+  | PairMatch (s, x1, x2, t) ->
+      "pmatch " ^ string_of_syn_tm s ^ " with | (" ^ x1 ^ ", " ^ x2 ^ ") -> "
+      ^ string_of_chk_tm t
 
 let%test _ = string_of_syn_tm (Var "n") = "n"
+let%test _ = string_of_syn_tm (App (Var "f", Num 42)) = "f 42"
 let%test _ = string_of_syn_tm (App (Var "f", sv "x")) = "f x"
 
 let%test _ =
@@ -265,6 +291,18 @@ let%test _ =
   let expected = "bmatch s with | true -> false | false -> true" in
   actual = expected
 
+let%test _ =
+  let actual = string_of_chk_tm (Pair (Num 42, Sum [ sv "x"; sv "y" ])) in
+  let expected = "(42, x + y)" in
+  actual = expected
+
+let%test _ =
+  let actual =
+    string_of_chk_tm (PairMatch (Var "p", "y1", "y2", Sum [ sv "y1"; sv "y2" ]))
+  in
+  let expected = "pmatch p with | (y1, y2) -> y1 + y2" in
+  actual = expected
+
 (** Convert a type to a string. *)
 let rec string_of_tp (t : tp) : string =
   match t with
@@ -278,9 +316,19 @@ let rec string_of_tp (t : tp) : string =
       if should_parenthesize then "Vec (" ^ s ^ ")" else "Vec " ^ s
   | Pi (x, t1, t2) ->
       "Pi (" ^ x ^ ":" ^ string_of_tp t1 ^ ") . " ^ string_of_tp t2
+  | Sigma (x, t1, t2) ->
+      "Sigma (" ^ x ^ ":" ^ string_of_tp t1 ^ ") . " ^ string_of_tp t2
 
 let%test _ = string_of_tp Nat = "Nat"
 let%test _ = string_of_tp (Vec (LNum 0)) = "Vec 0"
 let%test _ = string_of_tp (Vec (LVar "n")) = "Vec n"
 let%test _ = string_of_tp (Vec (LSum [ LVar "n"; LVar "m" ])) = "Vec (n + m)"
 let%test _ = string_of_tp (Pi ("n", Nat, Vec (LVar "n"))) = "Pi (n:Nat) . Vec n"
+
+let%test _ =
+  let actual = string_of_tp (arrow (times Nat Nat) Nat) in
+  let expected = "Pi (_:Sigma (_:Nat) . Nat) . Nat" in
+  actual = expected
+
+let%test _ =
+  string_of_tp (Sigma ("n", Nat, Vec (LVar "n"))) = "Sigma (n:Nat) . Vec n"
