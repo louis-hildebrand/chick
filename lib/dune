@@ -2,4 +2,5 @@
  (inline_tests)
  (preprocess
   (pps ppx_inline_test))
- (name typecheck))
+ (libraries z3)
+ (name chick))

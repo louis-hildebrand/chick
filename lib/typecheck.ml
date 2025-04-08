@@ -1,244 +1,103 @@
+open Context
+open Solver
 open Syntax
-module Context = Map.Make (String)
-module Syntax = Syntax
 
 type context = tp Context.t
 
 exception Type_error of string
 
-let string_of_context (ctx : context) : string =
-  Context.fold (fun k v acc -> acc ^ k ^ " : " ^ string_of_tp v ^ ", ") ctx "["
-  ^ "]"
-
-(** Create a fresh variable. *)
-let get_fresh_var : unit -> string =
+(** Generator for fresh variables. *)
+let (get_fresh_var, reset_fresh_var_ctr) : (unit -> string) * (unit -> unit) =
   let counter = ref 0 in
   let get () =
     let v = !counter in
     counter := !counter + 1;
     "#" ^ string_of_int v
   in
-  get
+  let reset () = counter := 0 in
+  (get, reset)
 
+let%test _ = reset_fresh_var_ctr () = ()
+let%test _ = get_fresh_var () = "#0"
+let%test _ = get_fresh_var () = "#1"
+let%test _ = reset_fresh_var_ctr () = ()
 let%test _ = get_fresh_var () = "#0"
 let%test _ = get_fresh_var () = "#1"
 
-(** Check if a sum is a valid size for a vector *)
-let rec is_valid_size (t : chk_tm) : bool =
-  match t with
-  | Num n -> n >= 0
-  | Sum ts -> List.for_all is_valid_size ts
-  | Syn (Var _) -> true
-  | _ -> false
-
-let%test _ = is_valid_size (Num 0)
-let%test _ = is_valid_size (sv "x")
-let%test _ = is_valid_size (Sum [ Num 0; Num 1; sv "x"; sv "y"; Num 2; Num 3 ])
-let%test _ = not (is_valid_size (Sum [ Num 0; Num (-1); sv "x" ]))
-
-(** Flatten sum term (e.g. 2 + (3 + (x+5)) + 4 = 2 + 3 + x + 5 + 4) *)
-let rec flatten_sum (sum : chk_tm list) : chk_tm list =
-  match sum with
-  | [] -> []
-  | Sum t :: ts -> flatten_sum t @ flatten_sum ts
-  | t :: ts -> t :: flatten_sum ts
-
-let%test _ = flatten_sum [ Num 0 ] = [ Num 0 ]
-let%test _ = flatten_sum [ Num 0; Num 0 ] = [ Num 0; Num 0 ]
-
-let%test _ =
-  flatten_sum [ Sum [ Num 0; Num 1 ]; Sum [ Num 2; Num 3 ] ]
-  = [ Num 0; Num 1; Num 2; Num 3 ]
-
-let%test _ =
-  flatten_sum [ Num 2; Sum [ Num 3; Sum [ sv "x"; Num 5 ] ]; Num 4 ]
-  = [ Num 2; Num 3; sv "x"; Num 5; Num 4 ]
-
-(** Partially evaluate and sort a sum (e.g. 2+3+y+5+4+x = 14+x+y) *)
-let sort_and_partially_eval_sum (s : chk_tm list) : chk_tm list =
-  let sum =
-    List.fold_left (fun acc t -> match t with Num n -> acc + n | _ -> acc) 0 s
-  in
-  let vars =
-    List.filter (fun t -> match t with Syn (Var _) -> true | _ -> false) s
-  in
-  let sorted_vars =
-    List.sort
-      (fun t1 t2 ->
-        match (t1, t2) with
-        | Syn (Var v1), Syn (Var v2) -> String.compare v1 v2
-        | _ -> 0 (* keep order unchanged *))
-      vars
-  in
-  if sum = 0 && sorted_vars <> [] then sorted_vars else Num sum :: sorted_vars
-
-let%test _ = sort_and_partially_eval_sum [ Num 0 ] = [ Num 0 ]
-let%test _ = sort_and_partially_eval_sum [ Num 3 ] = [ Num 3 ]
-let%test _ = sort_and_partially_eval_sum [ Num 0; Num 0 ] = [ Num 0 ]
-let%test _ = sort_and_partially_eval_sum [ sv "x"; Num 0 ] = [ sv "x" ]
-let%test _ = sort_and_partially_eval_sum [ Num 0; sv "x" ] = [ sv "x" ]
-let%test _ = sort_and_partially_eval_sum [ sv "y"; sv "x" ] = [ sv "x"; sv "y" ]
-
-let%test _ =
-  sort_and_partially_eval_sum [ Num 0; sv "y"; sv "x" ] = [ sv "x"; sv "y" ]
-
-let%test _ =
-  sort_and_partially_eval_sum
-    [ Num 3; Num 9; sv "y"; sv "x"; Num 1; Num 2; sv "z" ]
-  = [ Num 15; sv "x"; sv "y"; sv "z" ]
-
-(** Normalize sum *)
-let normalize_sum (sum : chk_tm list) : chk_tm list =
-  sort_and_partially_eval_sum (flatten_sum sum)
-
-let%test _ = normalize_sum [ Num 0; Num 0 ] = [ Num 0 ]
-
-let%test _ =
-  normalize_sum [ Num 3; Num 9; sv "y"; sv "x"; Num 1; Num 2; sv "z" ]
-  = [ Num 15; sv "x"; sv "y"; sv "z" ]
-
 (** Check whether 2 sizes are equal. *)
-let same_size (t1 : chk_tm) (t2 : chk_tm) : bool =
-  if not (is_valid_size t1) then
-    raise (Type_error ("Invalid size for vector: " ^ string_of_chk_tm t1))
-  else if not (is_valid_size t2) then
-    raise (Type_error ("Invalid size for vector: " ^ string_of_chk_tm t2))
-  else
-    let t1 = normalize_sum [ t1 ] in
-    let t2 = normalize_sum [ t2 ] in
-    t1 = t2
-
-let%test _ = same_size (Num 0) (Num 0)
-let%test _ = same_size (Num 1) (Num 1)
-let%test _ = not (same_size (Num 1) (Num 2))
-let%test _ = same_size (Num 0) (Sum [ Num 0; Num 0 ])
-let%test _ = same_size (Sum [ Num 0; Num 0 ]) (Sum [ Num 0; Num 0 ])
-let%test _ = same_size (Sum [ Num 0; Num 1 ]) (Sum [ Num 0; Num 0; Num 1 ])
-let%test _ = same_size (sv "x") (sv "x")
-let%test _ = not (same_size (sv "x") (sv "y"))
-let%test _ = same_size (Sum [ sv "x"; Num 0 ]) (Sum [ Num 0; sv "x" ])
-let%test _ = same_size (Sum [ Num 0; sv "x" ]) (Sum [ sv "x"; Num 0 ])
-let%test _ = same_size (Sum [ Num 0; sv "x" ]) (Sum [ Num 0; Num 0; sv "x" ])
-let%test _ = same_size (Sum [ sv "y"; sv "x" ]) (Sum [ Num 0; sv "y"; sv "x" ])
-let%test _ = same_size (Sum [ sv "y"; sv "x" ]) (Sum [ sv "x"; sv "y" ])
-let%test _ = not (same_size (Sum [ sv "y"; sv "x" ]) (Sum [ Num 0; sv "x" ]))
-
-let%test _ =
-  same_size
-    (Sum [ Num 3; Num 9; sv "y"; sv "x"; Num 1; Num 2; sv "z" ])
-    (Sum [ Num 15; sv "x"; sv "y"; sv "z" ])
+let same_size (n1 : len) (n2 : len) (delta : equation list) : bool =
+  Solver.always_equal (mk_equation (n1, n2)) delta
 
 (* unit tests for same_size *)
 
-(** Perform [e/x]t on the checkable term [t]. *)
-let rec chk_tm_subst (t : chk_tm) (x : string) (e : chk_tm) : chk_tm =
-  match t with
-  | Lam (y, _) when x == y -> t
-  | Lam (y, body) ->
-      let fresh_var = get_fresh_var () in
-      let body = chk_tm_subst body y (sv fresh_var) in
-      Lam (fresh_var, chk_tm_subst body x e)
-  | Fix (y, _) when x == y -> t
-  | Fix (y, body) ->
-      let fresh_var = get_fresh_var () in
-      let body = chk_tm_subst body y (sv fresh_var) in
-      Fix (fresh_var, chk_tm_subst body x e)
-  | Num _ -> t
-  | Sum sum -> Sum (List.map (fun t' -> chk_tm_subst t' x e) sum)
-  | Nil -> Nil
-  | Cons (len, head, tail) ->
-      Cons (chk_tm_subst len x e, chk_tm_subst head x e, chk_tm_subst tail x e)
-  | Syn s -> syn_tm_subst s x e
-  | VecMatch (vec, nil_case, _, _, _, cons_case) -> (
-      let fresh_len_name = get_fresh_var () in
-      let fresh_head_name = get_fresh_var () in
-      let fresh_tail_name = get_fresh_var () in
-      let cons_case = chk_tm_subst cons_case x (sv fresh_len_name) in
-      let cons_case = chk_tm_subst cons_case x (sv fresh_head_name) in
-      let cons_case = chk_tm_subst cons_case x (sv fresh_tail_name) in
-      let vec_sub = syn_tm_subst vec x e in
-      match vec_sub with
-      | Syn s ->
-          VecMatch
-            ( s,
-              chk_tm_subst nil_case x e,
-              fresh_len_name,
-              fresh_head_name,
-              fresh_tail_name,
-              chk_tm_subst cons_case x e )
-      | _ -> failwith "TODO")
-  | NatMatch (nat, zero_case, _, non_zero_case) -> (
-      let fresh_pred_name = get_fresh_var () in
-      let non_zero_case = chk_tm_subst non_zero_case x (sv fresh_pred_name) in
-      let nat_sub = syn_tm_subst nat x e in
-      match nat_sub with
-      | Syn s ->
-          NatMatch
-            ( s,
-              chk_tm_subst zero_case x e,
-              fresh_pred_name,
-              chk_tm_subst non_zero_case x e )
-      | _ -> failwith "TODO")
-
-(** Perform [e/x]s on the synthesizable term [s]. *)
-and syn_tm_subst (s : syn_tm) (x : string) (e : chk_tm) : chk_tm =
-  match s with
-  | Var y when x <> y -> Syn s
-  | Var y when x == y -> e
-  | App (s1, t1) -> (
-      let s1' = syn_tm_subst s1 x e in
-      let t1' = chk_tm_subst t1 x e in
-      match s1' with
-      | Syn s' -> Syn (App (s', t1'))
-      | Lam (y, body) ->
-          let fresh_var = get_fresh_var () in
-          let body = chk_tm_subst body y (sv fresh_var) in
-          (* Beta reduction / hereditary substitution *)
-          chk_tm_subst body y t1'
-      | _ -> failwith "TODO")
-  | Head (len, vec) -> (
-      let len' = chk_tm_subst len x e in
-      let vec' = syn_tm_subst vec x e in
-      match vec' with Syn s -> Syn (Head (len', s)) | _ -> failwith "TODO")
-  | Tail (len, vec) -> (
-      let len' = chk_tm_subst len x e in
-      let vec' = syn_tm_subst vec x e in
-      match vec' with Syn s -> Syn (Tail (len', s)) | _ -> failwith "TODO")
-  | _ -> failwith "TODO"
-
-(* unit tests for chk_tm_subst and syn_tm_subst *)
-let%test _ = chk_tm_subst (Lam ("x", Num 42)) "x" (Num 0) = Lam ("x", Num 42)
-let%test _ = chk_tm_subst (Lam ("y", Num 42)) "x" (Num 0) = Lam ("#2", Num 42)
-let%test _ = chk_tm_subst (Lam ("y", sv "x")) "x" (Num 0) = Lam ("#3", Num 0)
-let%test _ = chk_tm_subst (Lam ("y", sv "x")) "y" (Num 0) = Lam ("y", sv "x")
-let%test _ = chk_tm_subst (Fix ("x", Num 42)) "x" (Num 0) = Fix ("x", Num 42)
-let%test _ = chk_tm_subst (Fix ("y", Num 42)) "x" (Num 0) = Fix ("#4", Num 42)
-let%test _ = chk_tm_subst (Fix ("y", sv "x")) "x" (Num 0) = Fix ("#5", Num 0)
-let%test _ = chk_tm_subst (Fix ("y", sv "x")) "y" (Num 0) = Fix ("y", sv "x")
+let%test _ = same_size (LNum 0) (LNum 0) []
+let%test _ = same_size (LNum 1) (LNum 1) []
+let%test _ = not (same_size (LNum 1) (LNum 2) [])
+let%test _ = same_size (LNum 0) (LSum [ LNum 0; LNum 0 ]) []
+let%test _ = same_size (LSum [ LNum 0; LNum 0 ]) (LSum [ LNum 0; LNum 0 ]) []
 
 let%test _ =
-  chk_tm_subst (Sum [ Num 0; Num 1; sv "x"; sv "y" ]) "x" (Num 2)
-  = Sum [ Num 0; Num 1; Num 2; sv "y" ]
+  same_size (LSum [ LNum 0; LNum 1 ]) (LSum [ LNum 0; LNum 0; LNum 1 ]) []
+
+let%test _ = same_size (LVar "x") (LVar "x") []
+let%test _ = not (same_size (LVar "x") (LVar "y") [])
 
 let%test _ =
-  chk_tm_subst (Sum [ Num 0; Num 1; sv "x"; sv "y" ]) "x" (sv "y")
-  = Sum [ Num 0; Num 1; sv "y"; sv "y" ]
+  same_size (LVar "x") (LVar "y") [ mk_equation (LVar "x", LVar "y") ]
 
 let%test _ =
-  chk_tm_subst (Cons (Num 0, Num 1, Nil)) "x" (Num 0) = Cons (Num 0, Num 1, Nil)
+  same_size (LVar "x") (LVar "y")
+    [ mk_equation (LSum [ LVar "x"; LNum 1 ], LSum [ LVar "y"; LNum 1 ]) ]
 
 let%test _ =
-  chk_tm_subst (Cons (Num 0, sv "x", Nil)) "x" (Num 0) = Cons (Num 0, Num 0, Nil)
+  same_size (LSum [ LVar "x"; LNum 0 ]) (LSum [ LNum 0; LVar "x" ]) []
 
-let%test _ = chk_tm_subst (sv "x") "x" (Num 42) = Num 42
-let%test _ = chk_tm_subst (sv "x") "y" (Num 42) = sv "x"
+let%test _ =
+  same_size (LSum [ LNum 0; LVar "x" ]) (LSum [ LVar "x"; LNum 0 ]) []
+
+let%test _ =
+  same_size (LSum [ LNum 0; LVar "x" ]) (LSum [ LNum 0; LNum 0; LVar "x" ]) []
+
+let%test _ =
+  same_size
+    (LSum [ LVar "y"; LVar "x" ])
+    (LSum [ LNum 0; LVar "y"; LVar "x" ])
+    []
+
+let%test _ =
+  same_size (LSum [ LVar "y"; LVar "x" ]) (LSum [ LVar "x"; LVar "y" ]) []
+
+let%test _ =
+  not (same_size (LSum [ LVar "y"; LVar "x" ]) (LSum [ LNum 0; LVar "x" ]) [])
+
+let%test _ =
+  same_size
+    (LSum [ LNum 3; LNum 9; LVar "y"; LVar "x"; LNum 1; LNum 2; LVar "z" ])
+    (LSum [ LNum 15; LVar "x"; LVar "y"; LVar "z" ])
+    []
+
+(** Perform [n'/x]n on the length n. *)
+let rec len_subst (n : len) (x : string) (n' : len) : len =
+  match n with
+  | LNum k -> LNum k
+  | LVar y when x = y -> n'
+  | LVar y -> LVar y
+  | LSum terms -> LSum (List.map (fun n -> len_subst n x n') terms)
 
 (** Perform [t/x]T on the type [T]. *)
 let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
   match typ with
   | Nat -> Nat
-  | Vec len -> Vec (chk_tm_subst len x t)
-  | Pi (y, _, _) when x == y -> typ
+  | Vec n -> (
+      match len_of_tm t with
+      | Some len -> Vec (len_subst n x len)
+      | None when not (StringSet.mem x (vars n)) -> Vec n
+      | None ->
+          raise
+            (Type_error
+               ("Cannot replace variable '" ^ x ^ "' with non-length term '"
+              ^ string_of_chk_tm t ^ "' in '" ^ string_of_tp typ ^ "'.")))
+  | Pi (y, _, _) when x = y -> typ
   | Pi (y, tpA, tpB) ->
       (* Change the var y into a fresh unseen variable to avoid the case where y \in FV(t) *)
       let fresh_var = get_fresh_var () in
@@ -247,27 +106,294 @@ let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
       Pi (fresh_var, tp_subst tpA x t, tp_subst tpB x t)
 
 (* unit tests for tp_subst *)
-let%test _ = tp_subst (Vec (Num 0)) "x" (Num 0) = Vec (Num 0)
-let%test _ = tp_subst (Vec (sv "x")) "x" (Num 0) = Vec (Num 0)
+let _ = reset_fresh_var_ctr ()
+let%test _ = tp_subst (Vec (LNum 0)) "x" (Num 0) = Vec (LNum 0)
+let%test _ = tp_subst (Vec (LVar "x")) "x" (Num 0) = Vec (LNum 0)
 let%test _ = tp_subst (Pi ("x", Nat, Nat)) "x" (Num 0) = Pi ("x", Nat, Nat)
 
 let%test _ =
-  tp_subst (Pi ("x", Nat, Vec (sv "x"))) "x" (Num 0)
-  = Pi ("x", Nat, Vec (sv "x"))
+  tp_subst (Pi ("x", Nat, Vec (LVar "x"))) "x" (Num 0)
+  = Pi ("x", Nat, Vec (LVar "x"))
 
 let%test _ =
-  tp_subst (Pi ("x", Nat, Vec (sv "n"))) "n" (Num 45)
-  = Pi ("#6", Nat, Vec (Num 45))
+  tp_subst (Pi ("x", Nat, Vec (LVar "n"))) "n" (Num 45)
+  = Pi ("#0", Nat, Vec (LNum 45))
 
 let%test _ =
-  tp_subst (Pi ("x", Nat, Pi ("_", Vec (sv "x"), Vec (sv "n")))) "n" (Num 15)
-  = Pi ("#7", Nat, Pi ("#9", Vec (sv "#7"), Vec (Num 15)))
+  tp_subst
+    (Pi ("x", Nat, Pi ("_", Vec (LVar "x"), Vec (LVar "n"))))
+    "n" (Num 15)
+  = Pi ("#1", Nat, Pi ("#3", Vec (LVar "#1"), Vec (LNum 15)))
+
+let%test _ =
+  let actual = tp_subst (Pi ("_", Vec (LNum 0), Vec (LNum 1))) "x" Nil in
+  let expected = Pi ("#4", Vec (LNum 0), Vec (LNum 1)) in
+  actual = expected
+
+(** Perform [[x'/x] n] on the length [n]. *)
+let rec len_rename (x' : string) (x : string) (n : len) : len =
+  match n with
+  | LNum k -> LNum k
+  | LVar y when y = x -> LVar x'
+  | LVar y -> LVar y
+  | LSum terms -> LSum (terms |> List.map (len_rename x' x))
+
+(** Perform [[x'/x] t] on the checkable term [t]. *)
+let rec chk_tm_rename (x' : string) (x : string) (t : chk_tm) : chk_tm =
+  match t with
+  | Lam (y, _) when y = x -> t
+  | Lam (y, t) ->
+      (* Rename to avoid variable capture. *)
+      let y' = get_fresh_var () in
+      let t' = chk_tm_rename x' x (chk_tm_rename y' y t) in
+      Lam (y', t')
+  | Fix (y, _) when y = x -> t
+  | Fix (y, t) ->
+      (* Rename to avoid variable capture. *)
+      let y' = get_fresh_var () in
+      let t' = chk_tm_rename x' x (chk_tm_rename y' y t) in
+      Fix (y', t')
+  | Num k -> Num k
+  | Sum terms -> Sum (terms |> List.map (chk_tm_rename x' x))
+  | Nil -> Nil
+  | Cons (n, y, ys) ->
+      Cons (len_rename x' x n, chk_tm_rename x' x y, chk_tm_rename x' x ys)
+  | NatMatch (s, t0, t1) ->
+      let s' = syn_tm_rename x' x s in
+      let t0' = Option.map (chk_tm_rename x' x) t0 in
+      let t1' =
+        Option.map
+          (fun (y, t) ->
+            if y = x then (y, t)
+            else
+              (* Rename to avoid variable capture. *)
+              let y' = get_fresh_var () in
+              let t' = chk_tm_rename x' x (chk_tm_rename y' y t) in
+              (y', t'))
+          t1
+      in
+      NatMatch (s', t0', t1')
+  | VecMatch (s, t0, t1) ->
+      let s' = syn_tm_rename x' x s in
+      let t0' = Option.map (chk_tm_rename x' x) t0 in
+      let t1' =
+        Option.map
+          (fun (y1, y2, y3, t) ->
+            if List.mem x [ y1; y2; y3 ] then (y1, y2, y3, t)
+            else
+              (* Rename to avoid variable capture. *)
+              let y1' = get_fresh_var () in
+              let y2' = get_fresh_var () in
+              let y3' = get_fresh_var () in
+              let t' =
+                chk_tm_rename x' x
+                  (chk_tm_rename y3' y3
+                     (chk_tm_rename y2' y2 (chk_tm_rename y1' y1 t)))
+              in
+              (y1', y2', y3', t'))
+          t1
+      in
+      VecMatch (s', t0', t1')
+  | Syn s -> Syn (syn_tm_rename x' x s)
+
+(** Perform [[x'/x] s] on the synthesizable term [s]. *)
+and syn_tm_rename (x' : string) (x : string) (s : syn_tm) : syn_tm =
+  match s with
+  | Var y when y = x -> Var x'
+  | Var y -> Var y
+  | App (s, t) -> App (syn_tm_rename x' x s, chk_tm_rename x' x t)
+
+(* unit tests for chk_tm_rename and syn_tm_rename *)
+let%test _ =
+  let actual =
+    syn_tm_rename "g" "f" (apps (Var "f") [ sv "x"; sv "y"; sv "z" ])
+  in
+  let expected = apps (Var "g") [ sv "x"; sv "y"; sv "z" ] in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Lam ("x", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Lam ("x", Sum [ sv "x"; sv "x'"; sv "y" ]) in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Lam ("x'", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Lam ("#0", Sum [ sv "x'"; sv "#0"; sv "y" ]) in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Lam ("y", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Lam ("#1", Sum [ sv "x'"; sv "x'"; sv "#1" ]) in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Fix ("x", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Fix ("x", Sum [ sv "x"; sv "x'"; sv "y" ]) in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Fix ("x'", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Fix ("#0", Sum [ sv "x'"; sv "#0"; sv "y" ]) in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x" (Fix ("y", Sum [ sv "x"; sv "x'"; sv "y" ]))
+  in
+  let expected = Fix ("#1", Sum [ sv "x'"; sv "x'"; sv "#1" ]) in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "z'" "z"
+      (NatMatch
+         (Var "z", Some (sv "z"), Some ("z", Sum [ sv "z"; sv "z'"; sv "w" ])))
+  in
+  let expected =
+    NatMatch
+      (Var "z'", Some (sv "z'"), Some ("z", Sum [ sv "z"; sv "z'"; sv "w" ]))
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "z'" "z"
+      (NatMatch (Var "s", None, Some ("z'", Sum [ sv "z"; sv "z'"; sv "w" ])))
+  in
+  let expected =
+    NatMatch (Var "s", None, Some ("#0", Sum [ sv "z'"; sv "#0"; sv "w" ]))
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "z'" "z"
+      (NatMatch (Var "s", None, Some ("w", Sum [ sv "z"; sv "z'"; sv "w" ])))
+  in
+  let expected =
+    NatMatch (Var "s", None, Some ("#1", Sum [ sv "z'"; sv "z'"; sv "#1" ]))
+  in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "new" "y1"
+      (VecMatch
+         ( Var "y1",
+           Some (sv "y1"),
+           Some
+             ( "y1",
+               "y2",
+               "y3",
+               Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) ))
+  in
+  let expected =
+    VecMatch
+      ( Var "new",
+        Some (sv "new"),
+        Some
+          ( "y1",
+            "y2",
+            "y3",
+            Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) )
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "new" "y2"
+      (VecMatch
+         ( Var "y2",
+           Some (sv "y2"),
+           Some
+             ( "y1",
+               "y2",
+               "y3",
+               Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) ))
+  in
+  let expected =
+    VecMatch
+      ( Var "new",
+        Some (sv "new"),
+        Some
+          ( "y1",
+            "y2",
+            "y3",
+            Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) )
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "new" "y3"
+      (VecMatch
+         ( Var "y3",
+           Some (sv "y3"),
+           Some
+             ( "y1",
+               "y2",
+               "y3",
+               Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) ))
+  in
+  let expected =
+    VecMatch
+      ( Var "new",
+        Some (sv "new"),
+        Some
+          ( "y1",
+            "y2",
+            "y3",
+            Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) )
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "y1" "x"
+      (VecMatch
+         ( Var "s",
+           None,
+           Some
+             ( "y1",
+               "y2",
+               "y3",
+               Syn (apps (Var "f") [ sv "y1"; sv "y2"; sv "y3"; sv "x" ]) ) ))
+  in
+  let expected =
+    VecMatch
+      ( Var "s",
+        None,
+        Some
+          ( "#0",
+            "#1",
+            "#2",
+            Syn (apps (Var "f") [ sv "#0"; sv "#1"; sv "#2"; sv "y1" ]) ) )
+  in
+  actual = expected
 
 (** Check whether the types [t1] and [t2] are equal. *)
-let rec tp_eq (t1 : tp) (t2 : tp) : bool =
+let rec tp_eq (t1 : tp) (t2 : tp) (delta : equation list) : bool =
   match (t1, t2) with
   | Nat, Nat -> true
-  | Vec t1', Vec t2' -> same_size t1' t2' (* check if lengths are equal *)
+  | Vec t1', Vec t2' -> same_size t1' t2' delta
   | Pi (x, tpA, tpB), Pi (y, tpC, tpD) ->
       (* Change the vars x and y into a fresh unseen variable just for the sake of the comparison *)
       let fresh_var = sv (get_fresh_var ()) in
@@ -275,90 +401,214 @@ let rec tp_eq (t1 : tp) (t2 : tp) : bool =
       let tpB = tp_subst tpB x fresh_var in
       let tpC = tp_subst tpC y fresh_var in
       let tpD = tp_subst tpD y fresh_var in
-      tp_eq tpA tpC && tp_eq tpB tpD
+      tp_eq tpA tpC delta && tp_eq tpB tpD delta
   | _, _ -> false
 
 (* unit tests for tp_eq *)
-let%test _ = tp_eq (Vec (Num 0)) (Vec (Num 0))
-let%test _ = tp_eq (Vec (Num 1)) (Vec (Num 1))
-let%test _ = tp_eq (Vec (sv "y")) (Vec (sv "y"))
-let%test _ = not (tp_eq (Vec (sv "x")) (Vec (sv "y")))
-let%test _ = not (tp_eq (Vec (Num 1)) (Vec (Num 0)))
+let%test _ = tp_eq (Vec (LNum 0)) (Vec (LNum 0)) []
+let%test _ = tp_eq (Vec (LNum 1)) (Vec (LNum 1)) []
+let%test _ = tp_eq (Vec (LVar "y")) (Vec (LVar "y")) []
+let%test _ = not (tp_eq (Vec (LVar "x")) (Vec (LVar "y")) [])
+let%test _ = not (tp_eq (Vec (LNum 1)) (Vec (LNum 0)) [])
 
 let%test _ =
   tp_eq
-    (Vec (Sum [ Num 3; Num 9; sv "y"; sv "x"; Num 1; Num 2; sv "z" ]))
-    (Vec (Sum [ Num 15; sv "x"; sv "y"; sv "z" ]))
+    (Vec (LSum [ LNum 3; LNum 9; LVar "y"; LVar "x"; LNum 1; LNum 2; LVar "z" ]))
+    (Vec (LSum [ LNum 15; LVar "x"; LVar "y"; LVar "z" ]))
+    []
 
-let%test _ = tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Nat))
-
-let%test _ =
-  tp_eq
-    (Pi ("x", Nat, Pi ("y", Nat, Vec (sv "x"))))
-    (Pi ("x", Nat, Pi ("y", Nat, Vec (sv "x"))))
+let%test _ = tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Nat)) []
 
 let%test _ =
   tp_eq
-    (Pi ("a", Nat, Pi ("b", Nat, Vec (sv "a"))))
-    (Pi ("b", Nat, Pi ("a", Nat, Vec (sv "b"))))
+    (Pi ("x", Nat, Pi ("y", Nat, Vec (LVar "x"))))
+    (Pi ("x", Nat, Pi ("y", Nat, Vec (LVar "x"))))
+    []
 
-let%test _ = not (tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Vec (Num 0))))
-
-(** Substitute in a context. *)
-let ctx_subst (ctx : context) (x : string) (t : chk_tm) : context =
-  (* TODO: Apparently subst in a context is prone to subtle bugs. Delete it ASAP. *)
-  (* For example, what happens if the variable being substituted appears in the context? *)
-  Context.mapi (fun _ typ -> tp_subst typ x t) ctx
-
-(* unit tests for ctx_subst *)
 let%test _ =
-  let ctx = Context.of_seq (List.to_seq [ ("n", Nat); ("v", Vec (sv "n")) ]) in
-  let expected =
-    Context.of_seq (List.to_seq [ ("n", Nat); ("v", Vec (Num 0)) ])
-  in
-  let actual = ctx_subst ctx "n" (Num 0) in
-  actual = expected
+  tp_eq
+    (Pi ("a", Nat, Pi ("b", Nat, Vec (LVar "a"))))
+    (Pi ("b", Nat, Pi ("a", Nat, Vec (LVar "b"))))
+    []
+
+let%test _ = not (tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Vec (LNum 0))) [])
+
+let%test _ =
+  tp_eq (Vec (LVar "x")) (Vec (LVar "y")) [ mk_equation (LVar "x", LVar "y") ]
+
+let%test _ =
+  tp_eq (Vec (LVar "x")) (Vec (LVar "y"))
+    [ mk_equation (LSum [ LVar "x"; LNum 1 ], LSum [ LVar "y"; LNum 1 ]) ]
+
+(** Check that, in context [gamma], [n] has type [Nat]. *)
+let rec check_len_nat (gamma : context) (n : len) =
+  match n with
+  | LVar x when Context.find_opt x gamma = Some Nat -> ()
+  | LVar x when Context.find_opt x gamma = None ->
+      raise (Type_error ("Free variable: " ^ x))
+  | LNum k when k >= 0 -> ()
+  | LSum terms -> List.iter (fun t -> check_len_nat gamma t) terms
+  | _ ->
+      raise
+        (Type_error
+           ("Term '" ^ string_of_len n ^ "' does not have the expected type '"
+          ^ string_of_tp Nat ^ "'."))
 
 (** Check that, in context [ctx], [tm] has type [typ]. *)
-let rec check (ctx : context) (tm : chk_tm) (typ : tp) : unit =
+let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
+    : unit =
   match (tm, typ) with
-  | Lam (x, body), Pi (_, tpA, tpB) -> check (ctx |> Context.add x tpA) body tpB
-  | Fix (x, body), typ -> check (ctx |> Context.add x typ) body typ
+  | Lam (x, body), Pi (_, tpA, tpB) ->
+      check (gamma |> Context.add x tpA) delta body tpB
+  | Fix (x, body), typ -> check (gamma |> Context.add x typ) delta body typ
   | Num _, Nat -> ()
-  | Sum xs, Nat -> List.iter (fun t -> check ctx t Nat) xs
-  | Syn s, typ when tp_eq (synth ctx s) typ -> ()
-  | Nil, typ when tp_eq typ (Vec (Num 0)) -> ()
-  | Cons (len, head, tail), Vec n when same_size n (Sum [ len; Num 1 ]) ->
-      check ctx len Nat;
-      check ctx head Nat;
-      check ctx tail (Vec len)
-  | NatMatch (Var v, zero_case, pred_name, succ_case), typ
-    when synth ctx (Var v) = Nat ->
-      check (ctx_subst ctx v (Num 0))
-        (chk_tm_subst zero_case v (Num 0))
-        (tp_subst typ v (Num 0));
-      let ctx = ctx |> Context.add pred_name Nat in
-      let succ = Sum [ sv pred_name; Num 1 ] in
-      check (ctx_subst ctx v succ)
-        (chk_tm_subst succ_case v succ)
-        (tp_subst typ v succ)
-  | VecMatch (vec, nil_case, len_name, head_name, tail_name, cons_case), typ
-    -> (
-      let vec_type = synth ctx vec in
-      match vec_type with
-      | Vec (Syn (Var v)) ->
-          check (ctx_subst ctx v (Num 0))
-            (chk_tm_subst nil_case v (Num 0))
-            (tp_subst typ v (Num 0));
-          let ctx =
-            ctx |> Context.add len_name Nat |> Context.add head_name Nat
-            |> Context.add tail_name (Vec (sv len_name))
+  | Sum xs, Nat -> List.iter (fun t -> check gamma delta t Nat) xs
+  | Syn s, typ when tp_eq (synth gamma delta s) typ delta -> ()
+  | Nil, typ when tp_eq typ (Vec (LNum 0)) delta -> ()
+  | Cons (len, head, tail), Vec n when same_size n (LSum [ len; LNum 1 ]) delta
+    ->
+      check_len_nat gamma len;
+      check gamma delta head Nat;
+      check gamma delta tail (Vec len)
+  | NatMatch (s, zero_case, succ_case), typ when synth gamma delta s = Nat -> (
+      match len_of_tm (Syn s) with
+      | Some n ->
+          let check_zero_case () =
+            let is_reachable =
+              Solver.can_equal (mk_equation (n, LNum 0)) delta
+            in
+            match (zero_case, is_reachable) with
+            | None, false -> ()
+            | None, true ->
+                (* TODO: Give an example instantiation? *)
+                raise
+                  (Type_error
+                     "The zero branch is reachable but not implemented.")
+            | Some t, true ->
+                let delta' = mk_equation (n, LNum 0) :: delta in
+                check gamma delta' t typ
+            | Some _, false ->
+                raise
+                  (Type_error
+                     "The zero branch is unreachable and should therefore be \
+                      left unimplemented.")
           in
-          let succ = Sum [ sv len_name; Num 1 ] in
-          check (ctx_subst ctx v succ)
-            (chk_tm_subst cons_case v succ)
-            (tp_subst typ v succ)
-      | _ -> raise (Type_error "vmatch type error"))
+          let check_succ_case () =
+            let is_reachable =
+              Solver.can_equal
+                (mk_equation (n, LSum [ LVar (get_fresh_var ()); LNum 1 ]))
+                delta
+            in
+            match (succ_case, is_reachable) with
+            | None, false -> ()
+            | None, true ->
+                raise
+                  (Type_error
+                     "The succ branch is reachable but not implemented.")
+            | Some (y, t), true ->
+                (* y may shadow another variable, which can lead to
+                   contradictory equations (e.g., n = n + 1, where the n's are
+                   actually different)! *)
+                let is_shadowing =
+                  List.exists
+                    (fun n -> StringSet.mem y (vars n))
+                    (n :: List.concat [ List.map fst delta; List.map snd delta ])
+                in
+                let y, t =
+                  if is_shadowing then
+                    let y' = get_fresh_var () in
+                    let t' = chk_tm_rename y' y t in
+                    (y', t')
+                  else (y, t)
+                in
+                let gamma' = gamma |> Context.add y Nat in
+                let delta' =
+                  mk_equation (n, LSum [ LVar y; LNum 1 ]) :: delta
+                in
+                check gamma' delta' t typ
+            | Some (y, t), false ->
+                raise
+                  (Type_error
+                     ("The succ branch (" ^ y ^ " -> " ^ string_of_chk_tm t
+                    ^ ") is unreachable and should therefore be left \
+                       unimplemented."))
+          in
+          check_zero_case ();
+          check_succ_case ()
+      | _ ->
+          raise
+            (Type_error
+               ("Target of nmatch is " ^ string_of_syn_tm s
+              ^ ", which is unsupported. It must be a length.")))
+  | VecMatch (vec, nil_case, cons_case), typ -> (
+      let vec_type = synth gamma delta vec in
+      match vec_type with
+      | Vec n ->
+          let check_nil_case () =
+            let is_reachable =
+              Solver.can_equal (mk_equation (n, LNum 0)) delta
+            in
+            match (nil_case, is_reachable) with
+            | None, false -> ()
+            | None, true ->
+                raise
+                  (Type_error "The nil branch is reachable but not implemented.")
+            | Some t, true ->
+                let delta' = mk_equation (n, LNum 0) :: delta in
+                check gamma delta' t typ
+            | Some _, false ->
+                raise
+                  (Type_error
+                     "The nil branch is unreachable and should therefore be \
+                      left unimplemented.")
+          in
+          let check_cons_case () =
+            let is_reachable =
+              Solver.can_equal
+                (mk_equation (n, LSum [ LVar (get_fresh_var ()); LNum 1 ]))
+                delta
+            in
+            match (cons_case, is_reachable) with
+            | None, false -> ()
+            | None, true ->
+                raise
+                  (Type_error
+                     "The cons branch is reachable but not implemented.")
+            | Some (y1, y2, y3, t), true ->
+                (* y1 may shadow an existing variable! *)
+                let is_shadowing =
+                  List.exists
+                    (fun n -> StringSet.mem y1 (vars n))
+                    (n :: List.concat [ List.map fst delta; List.map snd delta ])
+                in
+                let y1, t =
+                  if is_shadowing then
+                    let y1' = get_fresh_var () in
+                    let t' = chk_tm_rename y1' y1 t in
+                    (y1', t')
+                  else (y1, t)
+                in
+                let gamma' =
+                  gamma |> Context.add y1 Nat |> Context.add y2 Nat
+                  |> Context.add y3 (Vec (LVar y1))
+                in
+                let delta' =
+                  mk_equation (n, LSum [ LVar y1; LNum 1 ]) :: delta
+                in
+                check gamma' delta' t typ
+            | Some _, false ->
+                raise
+                  (Type_error
+                     "The cons branch is unreachable and should therefore be \
+                      left unimplemented.")
+          in
+          check_nil_case ();
+          check_cons_case ()
+      | t ->
+          raise
+            (Type_error
+               ("Target of vmatch synthesized type " ^ string_of_tp t
+              ^ ". It must be a vector.")))
   | tm, typ ->
       raise
         (Type_error
@@ -366,42 +616,30 @@ let rec check (ctx : context) (tm : chk_tm) (typ : tp) : unit =
           ^ "' does not have the expected type '" ^ string_of_tp typ ^ "'."))
 
 (** Synthesize a type from the term [t] in context [ctx]. *)
-and synth (ctx : context) (t : syn_tm) : tp =
+and synth (gamma : context) (delta : equation list) (t : syn_tm) : tp =
   let res_tp =
     match t with
     | Var x -> (
-        match Context.find_opt x ctx with
+        match Context.find_opt x gamma with
         | Some typ -> typ
         | None -> raise (Type_error ("Free variable: " ^ x)))
     | App (s, t) -> (
-        let s_type = synth ctx s in
+        let s_type = synth gamma delta s in
         match s_type with
         | Pi (x, tpA, tpB) ->
-            check ctx t tpA;
+            check gamma delta t tpA;
             tp_subst tpB x t
         | _ -> raise (Type_error "applying non-function"))
-    | Head (len, vec) ->
-        let in_type = Vec (Sum [ sv "x"; Num 1 ]) in
-        let out_type = Nat in
-        let f_type = Pi ("x", Nat, arrow in_type out_type) in
-        let f_app = apps (Var "#head") [ len; Syn vec ] in
-        synth (ctx |> Context.add "#head" f_type) f_app
-    | Tail (len, vec) ->
-        let in_type = Vec (Sum [ sv "x"; Num 1 ]) in
-        let out_type = Vec (sv "x") in
-        let f_type = Pi ("x", Nat, arrow in_type out_type) in
-        let f_app = apps (Var "#tail") [ len; Syn vec ] in
-        synth (ctx |> Context.add "#tail" f_type) f_app
   in
   res_tp
 
 (** Typecheck a complete program. *)
 let check_program (prog : program) : unit =
-  let rec f (ctx : context) (decls : program) : unit =
+  let rec f (gamma : context) (decls : program) : unit =
     match decls with
     | [] -> ()
     | d :: ds ->
-        check ctx d.body d.typ;
-        f (ctx |> Context.add d.name d.typ) ds
+        check gamma [] d.body d.typ;
+        f (gamma |> Context.add d.name d.typ) ds
   in
   f Context.empty prog
