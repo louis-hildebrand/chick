@@ -1270,6 +1270,37 @@ let test_dependent_vec_pair_wrong_size _ =
     (Type_error "Term 'count_down 43' does not have the expected type 'Vec 42'.")
     (fun _ -> check_program [ count_down; foo ])
 
+let test_snd_free_var _ =
+  let foo =
+    (*
+      let foo : (Sigma (n:Nat) . Vec n) -> Vec n =
+        \p.pmatch p with
+           | (_, y) -> y
+    *)
+    {
+      name = "foo";
+      body = Lam ("p", PairMatch (Var "p", "_", "y", sv "y"));
+      typ = arrow (Sigma ("n", Nat, Vec (LVar "n"))) (Vec (LVar "n"));
+    }
+  in
+  assert_raises
+    (Type_error
+       "Type signature 'Pi (_:Sigma (n:Nat) . Vec n) . Vec n' has free \
+        variables: [n].") (fun _ -> check_program [ foo ])
+
+let test_pi_wrong_order _ =
+  let foo =
+    {
+      name = "foo";
+      body = Lam ("v", Lam ("n", sv "v"));
+      typ = arrow (Vec (LVar "n")) (Pi ("n", Nat, Vec (LVar "n")));
+    }
+  in
+  assert_raises
+    (Type_error
+       "Type signature 'Pi (_:Vec n) . Pi (n:Nat) . Vec n' has free variables: \
+        [n].") (fun _ -> check_program [ foo ])
+
 let test_filter _ =
   (* TODO: What if I used n instead of m for the output size? *)
   let filter =
@@ -1386,6 +1417,8 @@ let tests =
          "Nat * Bool" >:: test_nat_bool_pair;
          "dependent-vec-pair:ok" >:: test_dependent_vec_pair;
          "dependent-vec-pair:wrong size" >:: test_dependent_vec_pair_wrong_size;
+         "snd:free var" >:: test_snd_free_var;
+         "pi-type-wrong-order" >:: test_pi_wrong_order;
          "filter" >:: test_filter;
        ]
 

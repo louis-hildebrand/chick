@@ -767,13 +767,50 @@ and synth (gamma : context) (delta : equation list) (t : syn_tm) : tp =
   in
   res_tp
 
+(** Free variables in a type. *)
+let rec tp_free_vars (t : tp) : str_set =
+  match t with
+  | Bool | Nat -> StringSet.empty
+  | Vec n -> vars n
+  | Pi (x, t1, t2) ->
+      StringSet.union (tp_free_vars t1)
+        (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
+  | Sigma (x, t1, t2) ->
+      StringSet.union (tp_free_vars t1)
+        (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
+
+let%test _ = tp_free_vars (arrows [ Nat; Bool; Nat ]) = StringSet.empty
+let%test _ = tp_free_vars (Pi ("n", Nat, Vec (LVar "n"))) = StringSet.empty
+
+let%test _ =
+  tp_free_vars (Pi ("x", Vec (LVar "x"), Vec (LVar "x")))
+  = StringSet.singleton "x"
+
+let%test _ =
+  tp_free_vars (Sigma ("x", Vec (LVar "x"), Vec (LVar "x")))
+  = StringSet.singleton "x"
+
 (** Typecheck a complete program. *)
 let check_program (prog : program) : unit =
   let rec f (gamma : context) (decls : program) : unit =
     match decls with
     | [] -> ()
     | d :: ds ->
-        check gamma [] d.body d.typ;
-        f (gamma |> Context.add d.name d.typ) ds
+        let fvs =
+          StringSet.diff
+            (* Free variables are not allowed... *)
+            (tp_free_vars d.typ)
+            (* ... unless they were previously defined. *)
+            (StringSet.of_list (gamma |> Context.to_list |> List.map fst))
+        in
+        if StringSet.is_empty fvs then (
+          check gamma [] d.body d.typ;
+          f (gamma |> Context.add d.name d.typ) ds)
+        else
+          let vars_str = String.concat ", " (StringSet.to_list fvs) in
+          raise
+            (Type_error
+               ("Type signature '" ^ string_of_tp d.typ
+              ^ "' has free variables: [" ^ vars_str ^ "]."))
   in
   f Context.empty prog
