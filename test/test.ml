@@ -443,7 +443,7 @@ let zip_with =
 
 (* TODO: Also test a version of zip_with that uses nested vmatch rather than head/tail? *)
 
-let test_zip_with _ =
+let test_zip_with_head_tail _ =
   let plus = Lam ("a", Lam ("b", Sum [ sv "a"; sv "b" ])) in
   let example_use_0 =
     (* let ex0 : Vec 0 = zip_with 0 nil nil (+) *)
@@ -521,6 +521,77 @@ let test_zip_with _ =
       example_use_1;
       example_use_2;
     ]
+
+let test_zip_with_nested_vmatch _ =
+  let zip_with =
+    (*
+      let zip_with : Pi (n:Nat) . Vec n -> Vec n -> (Nat -> Nat -> Nat) -> Vec n =
+        fix zip_with.\n.\v1.\v2.\f.
+          vmatch v1 with
+          | nil ->
+            // This nested vmatch probably isn't necessary, it's just to test
+            // that omitting the cons branch works.
+            vmatch v2 with
+            | nil -> nil
+          | cons n' x xs ->
+            vmatch v2 with
+            | cons n' y ys ->
+              cons n' (f x y) (zip_with n' xs ys f)
+    *)
+    {
+      name = "zip_with";
+      body =
+        Fix
+          ( "zip_with",
+            Lam
+              ( "n",
+                Lam
+                  ( "v1",
+                    Lam
+                      ( "v2",
+                        Lam
+                          ( "f",
+                            VecMatch
+                              ( Var "v1",
+                                Some (VecMatch (Var "v2", Some Nil, None)),
+                                Some
+                                  ( "n'",
+                                    "x",
+                                    "xs",
+                                    VecMatch
+                                      ( Var "v2",
+                                        None,
+                                        Some
+                                          ( "n'",
+                                            "y",
+                                            "ys",
+                                            Cons
+                                              ( LVar "n'",
+                                                Syn
+                                                  (apps (Var "f")
+                                                     [ sv "x"; sv "y" ]),
+                                                Syn
+                                                  (apps (Var "zip_with")
+                                                     [
+                                                       sv "n'";
+                                                       sv "xs";
+                                                       sv "ys";
+                                                       sv "f";
+                                                     ]) ) ) ) ) ) ) ) ) ) );
+      typ =
+        Pi
+          ( "n",
+            Nat,
+            arrows
+              [
+                Vec (LVar "n");
+                Vec (LVar "n");
+                arrows [ Nat; Nat; Nat ];
+                Vec (LVar "n");
+              ] );
+    }
+  in
+  check_program [ zip_with ]
 
 let test_zip_with_wrong_size_0_vs_1 _ =
   let plus = Lam ("a", Lam ("b", Sum [ sv "a"; sv "b" ])) in
@@ -733,11 +804,11 @@ let test_take_wrong_base_case _ =
 
 let test_drop _ =
   (*
-    let drop : Pi n:Nat . Pi k:Nat . Pi _:Vec (k+n) . Vec n =
-      fix drop.\n.\k.\v.
+    let drop : Pi k:Nat . Pi n:Nat . Pi _:Vec (k+n) . Vec n =
+      fix drop.\k.\n.\v.
         match k with
         | 0      -> v
-        | k' + 1 -> drop n k' (tail (n + k') v)
+        | k' + 1 -> drop k' n (tail (k' + n) v)
   *)
   let drop =
     {
@@ -746,9 +817,9 @@ let test_drop _ =
         Fix
           ( "drop",
             Lam
-              ( "n",
+              ( "k",
                 Lam
-                  ( "k",
+                  ( "n",
                     Lam
                       ( "v",
                         NatMatch
@@ -759,18 +830,18 @@ let test_drop _ =
                                 Syn
                                   (apps (Var "drop")
                                      [
-                                       sv "n";
                                        sv "k'";
+                                       sv "n";
                                        Syn
                                          (apps (Var "tail")
-                                            [ Sum [ sv "n"; sv "k'" ]; sv "v" ]);
+                                            [ Sum [ sv "k'"; sv "n" ]; sv "v" ]);
                                      ]) ) ) ) ) ) );
       typ =
         Pi
-          ( "n",
+          ( "k",
             Nat,
             Pi
-              ( "k",
+              ( "n",
                 Nat,
                 arrow (Vec (LSum [ LVar "k"; LVar "n" ])) (Vec (LVar "n")) ) );
     }
@@ -786,20 +857,20 @@ let test_drop_wrong_base_case _ =
   let drop =
     {
       (*
-        let drop : Pi n:Nat . Pi k:Nat . Pi _:Vec (k+n) . Vec n =
-          fix drop.\n.\k.\v.
+        let drop : Pi k:Nat . Pi n:Nat . Pi _:Vec (k+n) . Vec n =
+          fix drop.\k.\n.\v.
             match k with
             | 0      -> nil  // <-- WRONG!
-            | k' + 1 -> drop n k' (tail (n + k' + 1) v)
+            | k' + 1 -> drop k' n (tail (k' + n) v)
       *)
       name = "drop";
       body =
         Fix
           ( "drop",
             Lam
-              ( "n",
+              ( "k",
                 Lam
-                  ( "k",
+                  ( "n",
                     Lam
                       ( "v",
                         NatMatch
@@ -810,21 +881,18 @@ let test_drop_wrong_base_case _ =
                                 Syn
                                   (apps (Var "drop")
                                      [
-                                       sv "n";
                                        sv "k'";
+                                       sv "n";
                                        Syn
                                          (apps (Var "tail")
-                                            [
-                                              Sum [ sv "n"; sv "k'"; Num 1 ];
-                                              sv "v";
-                                            ]);
+                                            [ Sum [ sv "k'"; sv "n" ]; sv "v" ]);
                                      ]) ) ) ) ) ) );
       typ =
         Pi
-          ( "n",
+          ( "k",
             Nat,
             Pi
-              ( "k",
+              ( "n",
                 Nat,
                 arrow (Vec (LSum [ LVar "k"; LVar "n" ])) (Vec (LVar "n")) ) );
     }
@@ -832,6 +900,55 @@ let test_drop_wrong_base_case _ =
   assert_raises
     (Type_error "Term 'nil' does not have the expected type 'Vec n'.") (fun _ ->
       check_program [ head; tail; drop ])
+
+let test_drop_wrong_step_case _ =
+  (*
+    let drop : Pi k:Nat . Pi n:Nat . Pi _:Vec (k+n) . Vec n =
+      fix drop.\k.\n.\v.
+        match k with
+        | 0      -> v
+        | k' + 1 -> drop k n (tail (k' + n) v)  // <-- Should be drop k', not drop k
+  *)
+  let drop =
+    {
+      name = "drop";
+      body =
+        Fix
+          ( "drop",
+            Lam
+              ( "k",
+                Lam
+                  ( "n",
+                    Lam
+                      ( "v",
+                        NatMatch
+                          ( Var "k",
+                            Some (sv "v"),
+                            Some
+                              ( "k'",
+                                Syn
+                                  (apps (Var "drop")
+                                     [
+                                       sv "k";
+                                       sv "n";
+                                       Syn
+                                         (apps (Var "tail")
+                                            [ Sum [ sv "k'"; sv "n" ]; sv "v" ]);
+                                     ]) ) ) ) ) ) );
+      typ =
+        Pi
+          ( "k",
+            Nat,
+            Pi
+              ( "n",
+                Nat,
+                arrow (Vec (LSum [ LVar "k"; LVar "n" ])) (Vec (LVar "n")) ) );
+    }
+  in
+  assert_raises
+    (Type_error
+       "Term 'tail (k' + n) v' does not have the expected type 'Vec (k + n)'.")
+    (fun _ -> check_program [ head; tail; drop ])
 
 let test_dot _ =
   let times =
@@ -908,58 +1025,6 @@ let test_first_half _ =
     }
   in
   check_program [ head; tail; take; first_half ]
-
-let test_vmatch_unreachable_and_missing _ =
-  let foo =
-    (*
-      let foo : Pi (n:Nat) . Vec n -> Vec n -> Vec n =
-        fix foo.\n.\v1.\v2.
-          vmatch v1 with
-          | nil ->
-            vmatch v2 with
-            | nil -> nil
-          | cons n' x xs ->
-            vmatch v2 with
-            | cons n' y ys ->
-              cons n' (x + y) (foo n' xs ys)
-    *)
-    {
-      name = "foo";
-      body =
-        Fix
-          ( "foo",
-            Lam
-              ( "n",
-                Lam
-                  ( "v1",
-                    Lam
-                      ( "v2",
-                        VecMatch
-                          ( Var "v1",
-                            Some (VecMatch (Var "v2", Some Nil, None)),
-                            Some
-                              ( "n'",
-                                "x",
-                                "xs",
-                                VecMatch
-                                  ( Var "v2",
-                                    None,
-                                    Some
-                                      ( "n'",
-                                        "y",
-                                        "ys",
-                                        Cons
-                                          ( LVar "n'",
-                                            Sum [ sv "x"; sv "y" ],
-                                            Syn
-                                              (apps (Var "foo")
-                                                 [ sv "n'"; sv "xs"; sv "ys" ])
-                                          ) ) ) ) ) ) ) ) );
-      typ =
-        Pi ("n", Nat, arrows [ Vec (LVar "n"); Vec (LVar "n"); Vec (LVar "n") ]);
-    }
-  in
-  check_program [ foo ]
 
 let test_vmatch_nil_case_reachable_but_missing _ =
   let unsafe_head =
@@ -1388,7 +1453,8 @@ let tests =
          "map:ok" >:: test_map;
          "foldl:ok" >:: test_foldl;
          "foldr:ok" >:: test_foldr;
-         "zip_with:ok" >:: test_zip_with;
+         "zip_with:head and tail:ok" >:: test_zip_with_head_tail;
+         "zip_with:nested vmatch:ok" >:: test_zip_with_nested_vmatch;
          "zip_with:0 with 1" >:: test_zip_with_wrong_size_0_vs_1;
          "zip_with:n with m" >:: test_zip_with_wrong_size_n_vs_m;
          "concat:ok" >:: test_concat;
@@ -1396,9 +1462,9 @@ let tests =
          "take:wrong base case" >:: test_take_wrong_base_case;
          "drop:ok" >:: test_drop;
          "drop:wrong base case" >:: test_drop_wrong_base_case;
+         "drop:wrong step case" >:: test_drop_wrong_step_case;
          "dot:ok" >:: test_dot;
          "first_half:ok" >:: test_first_half;
-         "vmatch-unreachable-missing" >:: test_vmatch_unreachable_and_missing;
          "vmatch-nil-reachable-missing"
          >:: test_vmatch_nil_case_reachable_but_missing;
          "vmatch-nil-unreachable-implemented"
@@ -1410,16 +1476,16 @@ let tests =
          "shadowing-at-toplevel" >:: test_shadow_toplevel;
          "shadowing-in-nmatch" >:: test_shadow_in_nmatch;
          "shadowing-in-vmatch" >:: test_shadow_in_vmatch;
-         "is_empty" >:: test_is_empty;
-         "bool2vec" >:: test_bool2vec;
-         "fst_nat" >:: test_fst_nat;
-         "snd_nat" >:: test_snd_nat;
-         "Nat * Bool" >:: test_nat_bool_pair;
+         "is_empty:ok" >:: test_is_empty;
+         "bool2vec:ok" >:: test_bool2vec;
+         "fst_nat:ok" >:: test_fst_nat;
+         "snd_nat:ok" >:: test_snd_nat;
+         "Nat*Bool:ok" >:: test_nat_bool_pair;
          "dependent-vec-pair:ok" >:: test_dependent_vec_pair;
          "dependent-vec-pair:wrong size" >:: test_dependent_vec_pair_wrong_size;
          "snd:free var" >:: test_snd_free_var;
          "pi-type-wrong-order" >:: test_pi_wrong_order;
-         "filter" >:: test_filter;
+         "filter:ok" >:: test_filter;
        ]
 
 let _ = run_test_tt_main tests

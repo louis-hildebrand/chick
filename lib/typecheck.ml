@@ -529,6 +529,20 @@ let%test _ =
 let%test _ = not (tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Vec (LNum 0))) [])
 
 let%test _ =
+  not
+    (tp_eq
+       (Pi ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       (Pi ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       [])
+
+let%test _ =
+  not
+    (tp_eq
+       (Pi ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       (Pi ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       [])
+
+let%test _ =
   tp_eq (Vec (LVar "x")) (Vec (LVar "y")) [ mk_equation (LVar "x", LVar "y") ]
 
 let%test _ =
@@ -552,6 +566,20 @@ let%test _ =
     (Sigma ("m1", Nat, Vec (LSum [ LVar "m1"; LVar "n" ])))
     (Sigma ("m2", Nat, Vec (LSum [ LVar "n'"; LVar "m2"; LNum 0 ])))
     [ mk_equation (LVar "n", LVar "n'") ]
+
+let%test _ =
+  not
+    (tp_eq
+       (Sigma ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       (Sigma ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       [])
+
+let%test _ =
+  not
+    (tp_eq
+       (Sigma ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       (Sigma ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       [])
 
 (** Check that, in context [gamma], [n] has type [Nat]. *)
 let rec check_len_nat (gamma : context) (n : len) =
