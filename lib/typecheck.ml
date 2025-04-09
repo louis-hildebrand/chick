@@ -87,6 +87,7 @@ let rec len_subst (n : len) (x : string) (n' : len) : len =
 (** Perform [t/x]T on the type [T]. *)
 let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
   match typ with
+  | Bool -> Bool
   | Nat -> Nat
   | Vec n -> (
       match len_of_tm t with
@@ -104,6 +105,13 @@ let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
       let tpA = tp_subst tpA y (sv fresh_var) in
       let tpB = tp_subst tpB y (sv fresh_var) in
       Pi (fresh_var, tp_subst tpA x t, tp_subst tpB x t)
+  | Sigma (y, _, _) when x = y -> typ
+  | Sigma (y, t1, t2) ->
+      (* Rename to avoid variable capture. *)
+      let y' = get_fresh_var () in
+      let t1' = tp_subst (tp_subst t1 y (sv y')) x t in
+      let t2' = tp_subst (tp_subst t2 y (sv y')) x t in
+      Sigma (y', t1', t2')
 
 (* unit tests for tp_subst *)
 let _ = reset_fresh_var_ctr ()
@@ -128,6 +136,28 @@ let%test _ =
 let%test _ =
   let actual = tp_subst (Pi ("_", Vec (LNum 0), Vec (LNum 1))) "x" Nil in
   let expected = Pi ("#4", Vec (LNum 0), Vec (LNum 1)) in
+  actual = expected
+
+let _ = reset_fresh_var_ctr ()
+let%test _ = tp_subst (Sigma ("x", Nat, Nat)) "x" (Num 0) = Sigma ("x", Nat, Nat)
+
+let%test _ =
+  tp_subst (Sigma ("x", Nat, Vec (LVar "x"))) "x" (Num 0)
+  = Sigma ("x", Nat, Vec (LVar "x"))
+
+let%test _ =
+  tp_subst (Sigma ("x", Nat, Vec (LVar "n"))) "n" (Num 45)
+  = Sigma ("#0", Nat, Vec (LNum 45))
+
+let%test _ =
+  let actual =
+    tp_subst
+      (Sigma ("x", Nat, Sigma ("_", Vec (LVar "x"), Vec (LVar "n"))))
+      "n" (Num 15)
+  in
+  let expected =
+    Sigma ("#1", Nat, Sigma ("#3", Vec (LVar "#1"), Vec (LNum 15)))
+  in
   actual = expected
 
 (** Perform [[x'/x] n] on the length [n]. *)
@@ -158,6 +188,14 @@ let rec chk_tm_rename (x' : string) (x : string) (t : chk_tm) : chk_tm =
   | Nil -> Nil
   | Cons (n, y, ys) ->
       Cons (len_rename x' x n, chk_tm_rename x' x y, chk_tm_rename x' x ys)
+  | False -> False
+  | True -> True
+  | Pair (t1, t2) -> Pair (chk_tm_rename x' x t1, chk_tm_rename x' x t2)
+  | BoolMatch (s, tt, tf) ->
+      let s' = syn_tm_rename x' x s in
+      let tt' = chk_tm_rename x' x tt in
+      let tf' = chk_tm_rename x' x tf in
+      BoolMatch (s', tt', tf')
   | NatMatch (s, t0, t1) ->
       let s' = syn_tm_rename x' x s in
       let t0' = Option.map (chk_tm_rename x' x) t0 in
@@ -194,6 +232,17 @@ let rec chk_tm_rename (x' : string) (x : string) (t : chk_tm) : chk_tm =
           t1
       in
       VecMatch (s', t0', t1')
+  | PairMatch (s, y1, y2, t) when x = y1 || x = y2 ->
+      PairMatch (syn_tm_rename x' x s, y1, y2, t)
+  | PairMatch (s, y1, y2, t) ->
+      (* Rename to avoid variable capture. *)
+      let s' = syn_tm_rename x' x s in
+      let y1' = get_fresh_var () in
+      let y2' = get_fresh_var () in
+      let t' =
+        chk_tm_rename x' x (chk_tm_rename y2' y2 (chk_tm_rename y1' y1 t))
+      in
+      PairMatch (s', y1', y2', t')
   | Syn s -> Syn (syn_tm_rename x' x s)
 
 (** Perform [[x'/x] s] on the synthesizable term [s]. *)
@@ -389,19 +438,65 @@ let%test _ =
   in
   actual = expected
 
+let _ = reset_fresh_var_ctr ()
+
+let%test _ =
+  let actual =
+    chk_tm_rename "x'" "x"
+      (Pair (Sum [ sv "x"; sv "x'"; sv "y" ], Sum [ sv "x'"; sv "z"; sv "x" ]))
+  in
+  let expected =
+    Pair (Sum [ sv "x'"; sv "x'"; sv "y" ], Sum [ sv "x'"; sv "z"; sv "x'" ])
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "new" "y1"
+      (PairMatch (Var "y1", "y1", "y2", Sum [ sv "y1"; sv "y2"; sv "z" ]))
+  in
+  let expected =
+    PairMatch (Var "new", "y1", "y2", Sum [ sv "y1"; sv "y2"; sv "z" ])
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "new" "y2"
+      (PairMatch (Var "y2", "y1", "y2", Sum [ sv "y1"; sv "y2"; sv "z" ]))
+  in
+  let expected =
+    PairMatch (Var "new", "y1", "y2", Sum [ sv "y1"; sv "y2"; sv "z" ])
+  in
+  actual = expected
+
+let%test _ =
+  let actual =
+    chk_tm_rename "y1" "z"
+      (PairMatch (Var "s", "y1", "y2", Sum [ sv "y1"; sv "y2"; sv "z" ]))
+  in
+  let expected =
+    PairMatch (Var "s", "#0", "#1", Sum [ sv "#0"; sv "#1"; sv "y1" ])
+  in
+  actual = expected
+
 (** Check whether the types [t1] and [t2] are equal. *)
 let rec tp_eq (t1 : tp) (t2 : tp) (delta : equation list) : bool =
   match (t1, t2) with
   | Nat, Nat -> true
+  | Bool, Bool -> true
   | Vec t1', Vec t2' -> same_size t1' t2' delta
   | Pi (x, tpA, tpB), Pi (y, tpC, tpD) ->
       (* Change the vars x and y into a fresh unseen variable just for the sake of the comparison *)
       let fresh_var = sv (get_fresh_var ()) in
-      let tpA = tp_subst tpA x fresh_var in
       let tpB = tp_subst tpB x fresh_var in
-      let tpC = tp_subst tpC y fresh_var in
       let tpD = tp_subst tpD y fresh_var in
       tp_eq tpA tpC delta && tp_eq tpB tpD delta
+  | Sigma (x, tpA, tpB), Sigma (y, tpC, tpD) ->
+      let z = get_fresh_var () in
+      let tpB' = tp_subst tpB x (sv z) in
+      let tpD' = tp_subst tpD y (sv z) in
+      tp_eq tpA tpC delta && tp_eq tpB' tpD' delta
   | _, _ -> false
 
 (* unit tests for tp_eq *)
@@ -434,11 +529,57 @@ let%test _ =
 let%test _ = not (tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Vec (LNum 0))) [])
 
 let%test _ =
+  not
+    (tp_eq
+       (Pi ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       (Pi ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       [])
+
+let%test _ =
+  not
+    (tp_eq
+       (Pi ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       (Pi ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       [])
+
+let%test _ =
   tp_eq (Vec (LVar "x")) (Vec (LVar "y")) [ mk_equation (LVar "x", LVar "y") ]
 
 let%test _ =
   tp_eq (Vec (LVar "x")) (Vec (LVar "y"))
     [ mk_equation (LSum [ LVar "x"; LNum 1 ], LSum [ LVar "y"; LNum 1 ]) ]
+
+let%test _ = tp_eq Bool Bool []
+let%test _ = not (tp_eq Bool Nat [])
+
+let%test _ =
+  tp_eq
+    (times (times Nat Bool) (times Bool Nat))
+    (times (times Nat Bool) (times Bool Nat))
+    []
+
+let%test _ = not (tp_eq (times Nat Bool) (times Nat Nat) [])
+let%test _ = not (tp_eq (times Bool Nat) (times Nat Nat) [])
+
+let%test _ =
+  tp_eq
+    (Sigma ("m1", Nat, Vec (LSum [ LVar "m1"; LVar "n" ])))
+    (Sigma ("m2", Nat, Vec (LSum [ LVar "n'"; LVar "m2"; LNum 0 ])))
+    [ mk_equation (LVar "n", LVar "n'") ]
+
+let%test _ =
+  not
+    (tp_eq
+       (Sigma ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       (Sigma ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       [])
+
+let%test _ =
+  not
+    (tp_eq
+       (Sigma ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       (Sigma ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       [])
 
 (** Check that, in context [gamma], [n] has type [Nat]. *)
 let rec check_len_nat (gamma : context) (n : len) =
@@ -470,6 +611,14 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
       check_len_nat gamma len;
       check gamma delta head Nat;
       check gamma delta tail (Vec len)
+  | False, Bool -> ()
+  | True, Bool -> ()
+  | Pair (t1, t2), Sigma (x, typ1, typ2) ->
+      check gamma delta t1 typ1;
+      check gamma delta t2 (tp_subst typ2 x t1)
+  | BoolMatch (s, tt, tf), typ when synth gamma delta s = Bool ->
+      check gamma delta tt typ;
+      check gamma delta tf typ
   | NatMatch (s, zero_case, succ_case), typ when synth gamma delta s = Nat -> (
       match len_of_tm (Syn s) with
       | Some n ->
@@ -609,6 +758,19 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
             (Type_error
                ("Target of vmatch synthesized type " ^ string_of_tp t
               ^ ". It must be a vector.")))
+  | PairMatch (s, x1, x2, t), _ -> (
+      match synth gamma delta s with
+      | Sigma (x, typ1, typ2) ->
+          let gamma' =
+            gamma |> Context.add x1 typ1
+            |> Context.add x2 (tp_subst typ2 x (sv x1))
+          in
+          check gamma' delta t typ
+      | other ->
+          raise
+            (Type_error
+               ("Subject of pair match synthesized " ^ string_of_tp other
+              ^ "'. It must synthesize a Sigma type.")))
   | tm, typ ->
       raise
         (Type_error
@@ -633,13 +795,50 @@ and synth (gamma : context) (delta : equation list) (t : syn_tm) : tp =
   in
   res_tp
 
+(** Free variables in a type. *)
+let rec tp_free_vars (t : tp) : str_set =
+  match t with
+  | Bool | Nat -> StringSet.empty
+  | Vec n -> vars n
+  | Pi (x, t1, t2) ->
+      StringSet.union (tp_free_vars t1)
+        (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
+  | Sigma (x, t1, t2) ->
+      StringSet.union (tp_free_vars t1)
+        (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
+
+let%test _ = tp_free_vars (arrows [ Nat; Bool; Nat ]) = StringSet.empty
+let%test _ = tp_free_vars (Pi ("n", Nat, Vec (LVar "n"))) = StringSet.empty
+
+let%test _ =
+  tp_free_vars (Pi ("x", Vec (LVar "x"), Vec (LVar "x")))
+  = StringSet.singleton "x"
+
+let%test _ =
+  tp_free_vars (Sigma ("x", Vec (LVar "x"), Vec (LVar "x")))
+  = StringSet.singleton "x"
+
 (** Typecheck a complete program. *)
 let check_program (prog : program) : unit =
   let rec f (gamma : context) (decls : program) : unit =
     match decls with
     | [] -> ()
     | d :: ds ->
-        check gamma [] d.body d.typ;
-        f (gamma |> Context.add d.name d.typ) ds
+        let fvs =
+          StringSet.diff
+            (* Free variables are not allowed... *)
+            (tp_free_vars d.typ)
+            (* ... unless they were previously defined. *)
+            (StringSet.of_list (gamma |> Context.to_list |> List.map fst))
+        in
+        if StringSet.is_empty fvs then (
+          check gamma [] d.body d.typ;
+          f (gamma |> Context.add d.name d.typ) ds)
+        else
+          let vars_str = String.concat ", " (StringSet.to_list fvs) in
+          raise
+            (Type_error
+               ("Type signature '" ^ string_of_tp d.typ
+              ^ "' has free variables: [" ^ vars_str ^ "]."))
   in
   f Context.empty prog
