@@ -73,9 +73,12 @@ let check : prop -> bool =
     | SATISFIABLE ->
         if debug then printf "SAT: %s\n" (Z3.Expr.to_string e) else ();
         true
-    | UNSATISFIABLE | UNKNOWN ->
+    | UNSATISFIABLE ->
         if debug then printf "UNSAT: %s\n" (Z3.Expr.to_string e) else ();
         false
+    | UNKNOWN ->
+        failwith
+          (sprintf "Z3 failed to decide whether %s." (Z3.Expr.to_string e))
   in
   fun p -> check (z3_expr_of_prop [] p)
 
