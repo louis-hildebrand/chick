@@ -1,0 +1,23 @@
+\newcommand{\chk}{\Longleftarrow}
+\newcommand{\syn}{\Longrightarrow}
+\newcommand{\app}[2]{#1 \; #2}
+\newcommand{\head}[2]{\texttt{head} \; #1 \; #2}
+\newcommand{\tail}[2]{\texttt{tail} \; #1 \; #2}
+\newcommand{\vectype}[1]{\texttt{Vec} \; #1}
+\newcommand{\pitype}[3]{\Pi (#1 \colon #2) . #3}
+\newcommand{\sigmatype}[3]{\Sigma (#1 \colon #2) . #3}
+\newcommand{\nat}{\texttt{Nat}}
+\newcommand{\bool}{\texttt{Bool}}
+\newcommand{\ttrue}{\texttt{true}}
+\newcommand{\tfalse}{\texttt{false}}
+\newcommand{\fix}{\texttt{fix} \;}
+\newcommand{\nil}{\texttt{nil}}
+\newcommand{\cons}[3]{\texttt{cons} \; #1 \; #2 \; #3}
+\newcommand{\pair}[2]{\langle #1, #2 \rangle}
+\newcommand{\natmatch}[4]{\texttt{match} \; #1 \; \texttt{with} \; | \; 0 \rightarrow #2 \; | \; #3 + 1 \rightarrow #4}
+\newcommand{\vecmatch}[6]{\texttt{match} \; #1 \; \texttt{with} \; | \; \nil \rightarrow #2 \; | \; \cons{#3}{#4}{#5} \rightarrow #6}
+\newcommand{\boolmatch}[3]{\texttt{match} \; #1 \; \texttt{with} \; | \; \ttrue \rightarrow #2 \; | \; \tfalse \rightarrow #3}
+\newcommand{\pairmatch}[4]{\texttt{match} \; #1 \; \texttt{with} \; | \; \pair{#2}{#3} \rightarrow #4}
+
+% Multiple inferences side-by-side
+\newenvironment{inferences}{\begin{equation*}\begin{gathered}}{\end{gathered}\end{equation*}}
