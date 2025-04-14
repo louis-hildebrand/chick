@@ -599,8 +599,8 @@ let rec check_len_nat (gamma : context) (n : len) =
 let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
     : unit =
   match (tm, typ) with
-  | Lam (x, body), Pi (_, tpA, tpB) ->
-      check (gamma |> Context.add x tpA) delta body tpB
+  | Lam (x, body), Pi (y, tpA, tpB) ->
+      check (gamma |> Context.add x tpA) delta body (tp_subst tpB y (sv x))
   | Fix (x, body), typ -> check (gamma |> Context.add x typ) delta body typ
   | Num _, Nat -> ()
   | Sum xs, Nat -> List.iter (fun t -> check gamma delta t Nat) xs
@@ -794,6 +794,65 @@ and synth (gamma : context) (delta : equation list) (t : syn_tm) : tp =
         | _ -> raise (Type_error "applying non-function"))
   in
   res_tp
+
+(* unit tests for check and synth *)
+
+(* What if you use different names in the term and the type? *)
+let%test_unit _ =
+  let typ =
+    Pi ("n", Nat, Pi ("k", Nat, times (Vec (LVar "n")) (Vec (LVar "k"))))
+  in
+  let typ_count = Pi ("n", Nat, Vec (LVar "n")) in
+  let tm =
+    Lam
+      ( "k",
+        Lam
+          ( "n",
+            Pair
+              (Syn (App (Var "count", sv "k")), Syn (App (Var "count", sv "n")))
+          ) )
+  in
+  check (Context.singleton "count" typ_count) [] tm typ
+
+let%test_unit _ =
+  let typ =
+    Pi ("n", Nat, Pi ("k", Nat, times (Vec (LVar "n")) (Vec (LVar "k"))))
+  in
+  let typ_count = Pi ("n", Nat, Vec (LVar "n")) in
+  let tm =
+    Lam
+      ( "k",
+        Lam
+          ( "n",
+            Pair
+              (Syn (App (Var "count", sv "n")), Syn (App (Var "count", sv "k")))
+          ) )
+  in
+  try
+    check (Context.singleton "count" typ_count) [] tm typ;
+    failwith "nothing thrown"
+  with Type_error "Term 'count n' does not have the expected type 'Vec k'." ->
+    ()
+
+let%test_unit _ =
+  let typ =
+    Pi ("n", Nat, Pi ("k", Nat, times (Vec (LVar "n")) (Vec (LVar "k"))))
+  in
+  let typ_count = Pi ("n", Nat, Vec (LVar "n")) in
+  let tm =
+    Lam
+      ( "k",
+        Lam
+          ( "n",
+            Pair
+              (Syn (App (Var "count", sv "k")), Syn (App (Var "count", sv "k")))
+          ) )
+  in
+  try
+    check (Context.singleton "count" typ_count) [] tm typ;
+    failwith "nothing thrown"
+  with Type_error "Term 'count k' does not have the expected type 'Vec n'." ->
+    ()
 
 (** Free variables in a type. *)
 let rec tp_free_vars (t : tp) : str_set =
