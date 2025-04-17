@@ -1,4 +1,4 @@
-# comp523-proj
+# chick
 
 Project for COMP523: Language-Based Security.
 
