@@ -480,7 +480,7 @@ let test_reverse_with_concat _ =
     (*
       let rev : Pi n:Nat . Vec n -> Vec n =
         fix rev.\n.\v.
-          match v with 
+          match v with
           | nil -> nil
           | cons m x xs -> concat m 1 (rev m xs) (cons 0 x nil)
               *)
@@ -568,8 +568,6 @@ let zip_with =
               vec Nat (LVar "n");
             ] );
   }
-
-(* TODO: Also test a version of zip_with that uses nested vmatch rather than head/tail? *)
 
 let test_zip_with_head_tail _ =
   let plus = Lam ("a", Lam ("b", Sum [ sv "a"; sv "b" ])) in
