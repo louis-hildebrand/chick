@@ -91,8 +91,8 @@ let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
   | Nat -> Nat
   | Vec (tp, n) -> (
       match len_of_tm t with
-      | Some len -> Vec (tp, len_subst n x len)
-      | None when not (StringSet.mem x (vars n)) -> Vec (tp, n)
+      | Some len -> Vec (tp_subst tp x t, len_subst n x len)
+      | None when not (StringSet.mem x (vars n)) -> Vec (tp_subst tp x t, n)
       | None ->
           raise
             (Type_error
@@ -161,6 +161,25 @@ let%test _ =
     Sigma ("#1", Nat, Sigma ("#3", vec Nat (LVar "#1"), vec Nat (LNum 15)))
   in
   actual = expected
+
+let%test _ =
+  let actual = tp_subst (Vec (Vec (Nat, LVar "n"), LVar "n")) "n" (Num 42) in
+  let expected = Vec (Vec (Nat, LNum 42), LNum 42) in
+  actual = expected
+
+let%test_unit _ =
+  try
+    ignore
+      (tp_subst
+         (Vec (Vec (Nat, LVar "y"), LNum 1))
+         "y"
+         (Syn (App (Var "f", sv "x"))));
+    failwith "No exception raised."
+  with
+  | Type_error
+      "Cannot replace variable 'y' with non-length term 'f x' in 'Vec Nat y'."
+  ->
+    ()
 
 (** Perform [[x'/x] n] on the length [n]. *)
 let rec len_rename (x' : string) (x : string) (n : len) : len =
