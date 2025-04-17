@@ -1720,6 +1720,153 @@ let zip =
 
 let test_zip _ = check_program [ head_bool; tail_bool; zip ]
 
+let test_transpose _ =
+  let row_heads =
+    (*
+      let row_heads : Pi(n:Nat) . Pi(m:Nat) . Vec (Vec Nat (m+1)) n -> Vec Nat n =
+        fix row_heads.\n.\m.\v.
+            match v with
+            | nil -> nil
+            | cons n' row v' ->
+                cons n' (head m row) (row_heads n' m v')
+    *)
+    {
+      name = "row_heads";
+      body =
+        Fix
+          ( "row_heads",
+            Lam
+              ( "n",
+                Lam
+                  ( "m",
+                    Lam
+                      ( "v",
+                        VecMatch
+                          ( Var "v",
+                            Some Nil,
+                            Some
+                              ( "n'",
+                                "row",
+                                "v'",
+                                Cons
+                                  ( LVar "n'",
+                                    Syn (apps (Var "head") [ sv "m"; sv "row" ]),
+                                    Syn
+                                      (apps (Var "row_heads")
+                                         [ sv "n'"; sv "m"; sv "v'" ]) ) ) ) )
+                  ) ) );
+      typ =
+        Pi
+          ( "n",
+            Nat,
+            Pi
+              ( "m",
+                Nat,
+                arrow
+                  (Vec (Vec (Nat, LSum [ LVar "m"; LNum 1 ]), LVar "n"))
+                  (Vec (Nat, LVar "n")) ) );
+    }
+  in
+  let row_tails =
+    (*
+      let row_tails :
+                Pi(n:Nat) . Pi(m:Nat) . Vec (Vec Nat (m+1)) n -> Vec (Vec Nat m) n =
+        fix row_tails.\n.\m.\v.
+            match v with
+            | nil -> nil
+            | cons n' row v' ->
+                cons n' (tail m row) (row_tails n' m v')
+    *)
+    {
+      name = "row_tails";
+      body =
+        Fix
+          ( "row_tails",
+            Lam
+              ( "n",
+                Lam
+                  ( "m",
+                    Lam
+                      ( "v",
+                        VecMatch
+                          ( Var "v",
+                            Some Nil,
+                            Some
+                              ( "n'",
+                                "row",
+                                "v'",
+                                Cons
+                                  ( LVar "n'",
+                                    Syn (apps (Var "tail") [ sv "m"; sv "row" ]),
+                                    Syn
+                                      (apps (Var "row_tails")
+                                         [ sv "n'"; sv "m"; sv "v'" ]) ) ) ) )
+                  ) ) );
+      typ =
+        Pi
+          ( "n",
+            Nat,
+            Pi
+              ( "m",
+                Nat,
+                arrow
+                  (Vec (Vec (Nat, LSum [ LVar "m"; LNum 1 ]), LVar "n"))
+                  (Vec (Vec (Nat, LVar "m"), LVar "n")) ) );
+    }
+  in
+  let transpose =
+    (*
+      let transpose : Pi(n:Nat) . Pi(m:Nat) . Vec (Vec Nat m) n -> Vec (Vec Nat n) m =
+        fix transpose.\n.\m.\v.
+            match m with
+            | 0 -> nil
+            | m' + 1 ->
+                cons m' (row_heads n m' v) (transpose n m' (row_tails n m' v))
+    *)
+    {
+      name = "transpose";
+      body =
+        Fix
+          ( "transpose",
+            Lam
+              ( "n",
+                Lam
+                  ( "m",
+                    Lam
+                      ( "v",
+                        NatMatch
+                          ( Var "m",
+                            Some Nil,
+                            Some
+                              ( "m'",
+                                Cons
+                                  ( LVar "m'",
+                                    Syn
+                                      (apps (Var "row_heads")
+                                         [ sv "n"; sv "m'"; sv "v" ]),
+                                    Syn
+                                      (apps (Var "transpose")
+                                         [
+                                           sv "n";
+                                           sv "m'";
+                                           Syn
+                                             (apps (Var "row_tails")
+                                                [ sv "n"; sv "m'"; sv "v" ]);
+                                         ]) ) ) ) ) ) ) );
+      typ =
+        Pi
+          ( "n",
+            Nat,
+            Pi
+              ( "m",
+                Nat,
+                arrow
+                  (Vec (Vec (Nat, LVar "m"), LVar "n"))
+                  (Vec (Vec (Nat, LVar "n"), LVar "m")) ) );
+    }
+  in
+  check_program [ head; row_heads; tail; row_tails; transpose ]
+
 let tests =
   "typecheck"
   >::: [
@@ -1772,6 +1919,7 @@ let tests =
          "filter:ok" >:: test_filter;
          "zip:ok" >:: test_zip;
          "mask_filter:ok" >:: test_mask_filter;
+         "transpose:ok" >:: test_transpose;
        ]
 
 let _ = run_test_tt_main tests
