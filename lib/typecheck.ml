@@ -2,7 +2,8 @@ open Context
 open Solver
 open Syntax
 
-type context = tp Context.t
+type context = scheme Context.t
+type tp_sim_subst = tp Context.t
 
 exception Type_error of string
 
@@ -25,53 +26,45 @@ let%test _ = get_fresh_var () = "#0"
 let%test _ = get_fresh_var () = "#1"
 
 (** Check whether 2 sizes are equal. *)
-let same_size (n1 : len) (n2 : len) (delta : equation list) : bool =
+let len_eq (n1 : len) (n2 : len) (delta : equation list) : bool =
   Solver.always_equal (mk_equation (n1, n2)) delta
 
-(* unit tests for same_size *)
+(* unit tests for len_eq *)
 
-let%test _ = same_size (LNum 0) (LNum 0) []
-let%test _ = same_size (LNum 1) (LNum 1) []
-let%test _ = not (same_size (LNum 1) (LNum 2) [])
-let%test _ = same_size (LNum 0) (LSum [ LNum 0; LNum 0 ]) []
-let%test _ = same_size (LSum [ LNum 0; LNum 0 ]) (LSum [ LNum 0; LNum 0 ]) []
-
-let%test _ =
-  same_size (LSum [ LNum 0; LNum 1 ]) (LSum [ LNum 0; LNum 0; LNum 1 ]) []
-
-let%test _ = same_size (LVar "x") (LVar "x") []
-let%test _ = not (same_size (LVar "x") (LVar "y") [])
+let%test _ = len_eq (LNum 0) (LNum 0) []
+let%test _ = len_eq (LNum 1) (LNum 1) []
+let%test _ = not (len_eq (LNum 1) (LNum 2) [])
+let%test _ = len_eq (LNum 0) (LSum [ LNum 0; LNum 0 ]) []
+let%test _ = len_eq (LSum [ LNum 0; LNum 0 ]) (LSum [ LNum 0; LNum 0 ]) []
 
 let%test _ =
-  same_size (LVar "x") (LVar "y") [ mk_equation (LVar "x", LVar "y") ]
+  len_eq (LSum [ LNum 0; LNum 1 ]) (LSum [ LNum 0; LNum 0; LNum 1 ]) []
+
+let%test _ = len_eq (LVar "x") (LVar "x") []
+let%test _ = not (len_eq (LVar "x") (LVar "y") [])
+let%test _ = len_eq (LVar "x") (LVar "y") [ mk_equation (LVar "x", LVar "y") ]
 
 let%test _ =
-  same_size (LVar "x") (LVar "y")
+  len_eq (LVar "x") (LVar "y")
     [ mk_equation (LSum [ LVar "x"; LNum 1 ], LSum [ LVar "y"; LNum 1 ]) ]
 
-let%test _ =
-  same_size (LSum [ LVar "x"; LNum 0 ]) (LSum [ LNum 0; LVar "x" ]) []
+let%test _ = len_eq (LSum [ LVar "x"; LNum 0 ]) (LSum [ LNum 0; LVar "x" ]) []
+let%test _ = len_eq (LSum [ LNum 0; LVar "x" ]) (LSum [ LVar "x"; LNum 0 ]) []
 
 let%test _ =
-  same_size (LSum [ LNum 0; LVar "x" ]) (LSum [ LVar "x"; LNum 0 ]) []
+  len_eq (LSum [ LNum 0; LVar "x" ]) (LSum [ LNum 0; LNum 0; LVar "x" ]) []
 
 let%test _ =
-  same_size (LSum [ LNum 0; LVar "x" ]) (LSum [ LNum 0; LNum 0; LVar "x" ]) []
+  len_eq (LSum [ LVar "y"; LVar "x" ]) (LSum [ LNum 0; LVar "y"; LVar "x" ]) []
 
 let%test _ =
-  same_size
-    (LSum [ LVar "y"; LVar "x" ])
-    (LSum [ LNum 0; LVar "y"; LVar "x" ])
-    []
+  len_eq (LSum [ LVar "y"; LVar "x" ]) (LSum [ LVar "x"; LVar "y" ]) []
 
 let%test _ =
-  same_size (LSum [ LVar "y"; LVar "x" ]) (LSum [ LVar "x"; LVar "y" ]) []
+  not (len_eq (LSum [ LVar "y"; LVar "x" ]) (LSum [ LNum 0; LVar "x" ]) [])
 
 let%test _ =
-  not (same_size (LSum [ LVar "y"; LVar "x" ]) (LSum [ LNum 0; LVar "x" ]) [])
-
-let%test _ =
-  same_size
+  len_eq
     (LSum [ LNum 3; LNum 9; LVar "y"; LVar "x"; LNum 1; LNum 2; LVar "z" ])
     (LSum [ LNum 15; LVar "x"; LVar "y"; LVar "z" ])
     []
@@ -89,6 +82,7 @@ let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
   match typ with
   | Bool -> Bool
   | Nat -> Nat
+  | Alpha alpha -> Alpha alpha
   | Vec (tp, n) -> (
       match len_of_tm t with
       | Some len -> Vec (tp, len_subst n x len)
@@ -487,7 +481,8 @@ let rec tp_eq (t1 : tp) (t2 : tp) (delta : equation list) : bool =
   match (t1, t2) with
   | Nat, Nat -> true
   | Bool, Bool -> true
-  | Vec (tp1, n1), Vec (tp2, n2) -> tp_eq tp1 tp2 delta && same_size n1 n2 delta
+  | Alpha alpha1, Alpha alpha2 -> alpha1 = alpha2
+  | Vec (tp1, n1), Vec (tp2, n2) -> tp_eq tp1 tp2 delta && len_eq n1 n2 delta
   | Pi (x, tpA, tpB), Pi (y, tpC, tpD) ->
       (* Change the vars x and y into a fresh unseen variable just for the sake of the comparison *)
       let fresh_var = sv (get_fresh_var ()) in
@@ -593,10 +588,85 @@ let%test _ =
        (Sigma ("x", Nat, vec Nat (LSum [ LVar "x"; LVar "x" ])))
        [])
 
+(** Perform [s]A on the type [A]. *)
+let rec apply_tp_sim_subst (subst : tp_sim_subst) (typ : tp) : tp =
+  match typ with
+  | Bool | Nat -> typ
+  | Alpha alpha -> (
+      try Context.find alpha subst with Not_found -> typ)
+  | Vec (typ', n) -> Vec (apply_tp_sim_subst subst typ', n)
+  | Pi (x, tpA, tpB) ->
+      Pi (x, apply_tp_sim_subst subst tpA, apply_tp_sim_subst subst tpB)
+  | Sigma (x, tpA, tpB) ->
+      Sigma (x, apply_tp_sim_subst subst tpA, apply_tp_sim_subst subst tpB)
+
+let tp_sim_subst_comp (subst1 : tp_sim_subst) (subst2 : tp_sim_subst) : tp_sim_subst =
+  let subst2' = Context.map (fun typ -> apply_tp_sim_subst subst1 typ) subst2 in
+  Context.union (fun _ _ typ2 -> Some typ2) subst1 subst2'
+
+(* Instantiate a scheme ∀ α1, α2, ... , αN . A to a type where α1, α2, ... , αN are replaced by A1, A2, ... , AN. *)
+let instantiate (Forall (vars, tp) : scheme) : tp =
+  let sub = List.map (fun x -> (x, Alpha (get_fresh_var ()))) vars in
+  let subst = Context.of_list sub in
+  apply_tp_sim_subst subst tp
+
+(* unit tests for instantiate *)
+let _ = reset_fresh_var_ctr ()
+let%test _ = instantiate (Forall ([], Nat)) = Nat
+let%test _ = instantiate (Forall ([], Bool)) = Bool
+let%test _ = instantiate (Forall ([ "A" ], Bool)) = Bool
+let%test _ = instantiate (Forall ([ "A" ], Alpha "A")) = Alpha "#1"
+
+let%test _ =
+  instantiate (Forall ([ "A" ], Vec (Alpha "A", LNum 0)))
+  = Vec (Alpha "#2", LNum 0)
+
+let%test _ =
+  instantiate (Forall ([ "A"; "B" ], arrow (Alpha "A") (Alpha "B")))
+  = arrow (Alpha "#3") (Alpha "#4")
+
+let context_free_type_vars (gamma : context) : str_set =
+  Context.fold
+    (fun _ sch acc ->
+      let free_type_vars = scheme_free_type_vars sch in
+      StringSet.union free_type_vars acc)
+    gamma 
+    StringSet.empty
+
+(* Generalize a monomorphic type to a polymorphic type. *)
+let generalize (gamma : context) (typ : tp) : scheme =
+  let free_type_vars = tp_free_type_vars typ in
+  let free_type_vars_in_context = context_free_type_vars gamma in
+  let free_type_vars = StringSet.diff free_type_vars free_type_vars_in_context in
+  Forall (StringSet.elements free_type_vars, typ)
+
+let rec occurs (a : string) (typ : tp) : bool =
+  match typ with
+  | Alpha b -> a = b
+  | Bool | Nat -> false
+  | Vec (typ', _) -> occurs a typ'
+  | Pi (_, tpA, tpB) | Sigma (_, tpA, tpB) -> occurs a tpA || occurs a tpB
+
+let rec unify (delta: equation list) (tpA : tp) (tpB : tp) : tp_sim_subst = 
+  match (tpA, tpB) with
+  | Bool, Bool | Nat, Nat -> Context.empty
+  | Alpha a, Alpha b when a = b -> Context.empty
+  | Alpha a, typ | typ, Alpha a -> 
+      if occurs a typ then
+        raise (Type_error ("Infinite type: " ^ a ^ " = " ^ string_of_tp typ))
+      else Context.singleton a typ
+  | Vec (tpA, nA), Vec (tpB, nB) when len_eq nA nB delta -> unify delta tpA tpB
+  | Pi (_, a1, b1), Pi (_, a2, b2)
+  | Sigma (_, a1, b1), Sigma (_, a2, b2) ->
+      let s1 = unify delta a1 a2 in
+      let s2 = unify delta (apply_tp_sim_subst s1 b1) (apply_tp_sim_subst s1 b2) in
+      tp_sim_subst_comp s2 s1
+  | _ -> raise (Type_error ("Cannot unify " ^ string_of_tp tpA ^ " and " ^ string_of_tp tpB))
+
 (** Check that, in context [gamma], [n] has type [Nat]. *)
-let rec check_len_nat (gamma : context) (n : len) =
+let rec check_len_nat (gamma : context) (n : len) : unit =
   match n with
-  | LVar x when Context.find_opt x gamma = Some Nat -> ()
+  | LVar x when Context.find_opt x gamma = Some (mono Nat) -> ()
   | LVar x when Context.find_opt x gamma = None ->
       raise (Type_error ("Free variable: " ^ x))
   | LNum k when k >= 0 -> ()
@@ -617,9 +687,9 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
   | Num _, Nat -> ()
   | Sum xs, Nat -> List.iter (fun t -> check gamma delta t Nat) xs
   | Syn s, typ when tp_eq (synth gamma delta s) typ delta -> ()
-  | Nil, Vec (_, n) when same_size n (LNum 0) delta -> ()
+  | Nil, Vec (_, n) when len_eq n (LNum 0) delta -> ()
   | Cons (len, head, tail), Vec (tp, n)
-    when same_size n (LSum [ len; LNum 1 ]) delta ->
+    when len_eq n (LSum [ len; LNum 1 ]) delta ->
       check_len_nat gamma len;
       check gamma delta head tp;
       check gamma delta tail (Vec (tp, len))
@@ -791,21 +861,18 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
 
 (** Synthesize a type from the term [t] in context [ctx]. *)
 and synth (gamma : context) (delta : equation list) (t : syn_tm) : tp =
-  let res_tp =
-    match t with
-    | Var x -> (
-        match Context.find_opt x gamma with
-        | Some typ -> typ
-        | None -> raise (Type_error ("Free variable: " ^ x)))
-    | App (s, t) -> (
-        let s_type = synth gamma delta s in
-        match s_type with
-        | Pi (x, tpA, tpB) ->
-            check gamma delta t tpA;
-            tp_subst tpB x t
-        | _ -> raise (Type_error "applying non-function"))
-  in
-  res_tp
+  match t with
+  | Var x -> (
+      match Context.find_opt x gamma with
+      | Some sch -> instantiate sch in
+      | None -> raise (Type_error ("Free variable: " ^ x)))
+  | App (s, t) -> (
+      let s_type = synth gamma delta s in
+      match s_type with
+      | Pi (x, tpA, tpB) ->
+          check gamma delta t tpA;
+          tp_subst tpB x t
+      | _ -> raise (Type_error "applying non-function"))
 
 (* unit tests for check and synth *)
 
@@ -867,29 +934,6 @@ let%test_unit _ =
   with
   | Type_error "Term 'count k' does not have the expected type 'Vec Nat n'." ->
     ()
-
-(** Free variables in a type. *)
-let rec tp_free_vars (t : tp) : str_set =
-  match t with
-  | Bool | Nat -> StringSet.empty
-  | Vec (_, n) -> vars n
-  | Pi (x, t1, t2) ->
-      StringSet.union (tp_free_vars t1)
-        (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
-  | Sigma (x, t1, t2) ->
-      StringSet.union (tp_free_vars t1)
-        (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
-
-let%test _ = tp_free_vars (arrows [ Nat; Bool; Nat ]) = StringSet.empty
-let%test _ = tp_free_vars (Pi ("n", Nat, vec Nat (LVar "n"))) = StringSet.empty
-
-let%test _ =
-  tp_free_vars (Pi ("x", vec Nat (LVar "x"), vec Nat (LVar "x")))
-  = StringSet.singleton "x"
-
-let%test _ =
-  tp_free_vars (Sigma ("x", vec Nat (LVar "x"), vec Nat (LVar "x")))
-  = StringSet.singleton "x"
 
 (** Typecheck a complete program. *)
 let check_program (prog : program) : unit =

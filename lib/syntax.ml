@@ -45,37 +45,20 @@ and chk_tm =
 type tp =
   | Bool
   | Nat
-  | Vec of tp * len
+  | Alpha of string (* type variable *)
+  | Vec of tp * len (* vector type *)
   | Pi of string * tp * tp (* dependent function type (x : A1) -> A2 *)
   | Sigma of string * tp * tp (* dependent pair type (x : A1) * A2 *)
 
+type scheme = Forall of string list * tp (* ∀ α1, α2, ... , αN . A *)
 type decl = { name : string; body : chk_tm; typ : tp }
 type program = decl list
 
-(** Try to convert an arbitrary expression to a length. *)
-let rec len_of_tm (t : chk_tm) : len option =
-  match t with
-  | Syn (Var x) -> Some (LVar x)
-  | Num n -> Some (LNum n)
-  | Sum xs ->
-      let term_options = List.map len_of_tm xs in
-      if List.for_all (fun x -> Option.is_some x) term_options then
-        Some (LSum (List.map (fun x -> Option.get x) term_options))
-      else None
-  | _ -> None
-
-(** Variables in a length. *)
-let rec vars (n : len) : str_set =
-  match n with
-  | LNum _ -> StringSet.empty
-  | LVar x -> StringSet.singleton x
-  | LSum terms ->
-      List.fold_left
-        (fun acc x -> StringSet.union acc (vars x))
-        StringSet.empty terms
-
 (** Shorthand for a vector type. *)
 let vec (tp : tp) (n : len) : tp = Vec (tp, n)
+
+let%test _ = vec Nat (LNum 0) = Vec (Nat, LNum 0)
+let%test _ = vec Nat (LVar "n") = Vec (Nat, LVar "n")
 
 (** Shorthand for the type of a non-dependent function. *)
 let arrow (t1 : tp) (t2 : tp) : tp = Pi ("_", t1, t2)
@@ -101,12 +84,86 @@ let%test _ =
   arrows [ Nat; Nat; Nat; Nat ]
   = Pi ("_", Nat, Pi ("_", Nat, Pi ("_", Nat, Nat)))
 
+(* Shorthand for a type scheme with no bound variables: a monomorphic type. *)
+let mono (typ: tp) : scheme = Forall ([], typ)
+
 (** Shorthand for applying a function to many arguments. *)
 let apps (f : syn_tm) (args : chk_tm list) : syn_tm =
   List.fold_left (fun f a -> App (f, a)) f args
 
 (** Shorthand for a variable as a checkable term. *)
 let sv (name : string) : chk_tm = Syn (Var name)
+
+(** Try to convert an arbitrary expression to a length. *)
+let rec len_of_tm (t : chk_tm) : len option =
+  match t with
+  | Syn (Var x) -> Some (LVar x)
+  | Num n -> Some (LNum n)
+  | Sum xs ->
+      let term_options = List.map len_of_tm xs in
+      if List.for_all (fun x -> Option.is_some x) term_options then
+        Some (LSum (List.map (fun x -> Option.get x) term_options))
+      else None
+  | _ -> None
+
+(** Variables in a length. *)
+let rec vars (n : len) : str_set =
+  match n with
+  | LNum _ -> StringSet.empty
+  | LVar x -> StringSet.singleton x
+  | LSum terms ->
+      List.fold_left
+        (fun acc x -> StringSet.union acc (vars x))
+        StringSet.empty terms
+
+(** Free variables in a type. *)
+let rec tp_free_vars (t : tp) : str_set =
+  match t with
+  | Bool | Nat | Alpha _ -> StringSet.empty
+  | Vec (_, n) -> vars n
+  | Pi (x, t1, t2) ->
+      StringSet.union (tp_free_vars t1)
+        (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
+  | Sigma (x, t1, t2) ->
+      StringSet.union (tp_free_vars t1)
+        (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
+
+let%test _ = tp_free_vars (arrows [ Nat; Bool; Nat ]) = StringSet.empty
+let%test _ = tp_free_vars (Pi ("n", Nat, vec Nat (LVar "n"))) = StringSet.empty
+
+let%test _ =
+  tp_free_vars (Pi ("x", vec Nat (LVar "x"), vec Nat (LVar "x")))
+  = StringSet.singleton "x"
+
+let%test _ =
+  tp_free_vars (Sigma ("x", vec Nat (LVar "x"), vec Nat (LVar "x")))
+  = StringSet.singleton "x"
+
+let rec tp_free_type_vars (t : tp) : str_set =
+  match t with
+  | Bool | Nat -> StringSet.empty
+  | Alpha x -> StringSet.singleton x
+  | Vec (typ, _) -> tp_free_type_vars typ
+  | Pi (_, typ1, typ2) | Sigma (_, typ1, typ2) ->
+      StringSet.union (tp_free_type_vars typ1) (tp_free_type_vars typ2)
+
+let%test _ = tp_free_type_vars (arrows [ Nat; Bool; Nat ]) = StringSet.empty
+let%test _ = tp_free_type_vars (Alpha "A") = StringSet.singleton "A"
+
+let%test _ =
+  tp_free_type_vars (arrow (Alpha "A") (Alpha "B"))
+  = StringSet.of_list [ "A"; "B" ]
+
+let scheme_free_type_vars (Forall (vars, tp) : scheme) : str_set =
+  let free_type_vars = tp_free_type_vars tp in
+  StringSet.diff free_type_vars (StringSet.of_list vars)
+
+let%test _ =
+  scheme_free_type_vars (Forall ([], vec Nat (LVar "n"))) = StringSet.empty
+let%test _ =
+  scheme_free_type_vars (Forall ([], vec (Alpha "A") (LVar "n"))) = StringSet.singleton "A"
+let%test _ =
+  scheme_free_type_vars (Forall (["A"], vec (Alpha "A") (LVar "n"))) = StringSet.empty
 
 (** Convert a length to a string. *)
 let rec string_of_len (n : len) : string =
@@ -311,9 +368,10 @@ let rec string_of_tp (t : tp) : string =
   match t with
   | Nat -> "Nat"
   | Bool -> "Bool"
+  | Alpha a -> a
   | Vec (tp, n) ->
       let should_parenthesize_tp =
-        match tp with Nat | Bool -> false | _ -> true
+        match tp with Nat | Bool | Alpha _ -> false | _ -> true
       in
       let should_parenthesize_len =
         match n with LNum _ | LVar _ -> false | _ -> true
@@ -333,6 +391,8 @@ let rec string_of_tp (t : tp) : string =
       "Sigma (" ^ x ^ ":" ^ string_of_tp t1 ^ ") . " ^ string_of_tp t2
 
 let%test _ = string_of_tp Nat = "Nat"
+let%test _ = string_of_tp Bool = "Bool"
+let%test _ = string_of_tp (Alpha "a") = "a"
 let%test _ = string_of_tp (vec Nat (LNum 0)) = "Vec Nat 0"
 let%test _ = string_of_tp (Vec (Bool, LVar "n")) = "Vec Bool n"
 
@@ -353,3 +413,15 @@ let%test _ =
 let%test _ =
   string_of_tp (Sigma ("n", Nat, vec Bool (LVar "n")))
   = "Sigma (n:Nat) . Vec Bool n"
+
+(* Convert a scheme to a string. *)
+let string_of_scheme (Forall (vars, tp) : scheme) : string =
+  let vars_str = String.concat ", " vars in
+  let tp_str = string_of_tp tp in
+  "∀ " ^ vars_str ^ ". " ^ tp_str
+
+let%test _ = string_of_scheme (Forall ([], Nat)) = "∀ . Nat"
+
+let%test _ =
+  string_of_scheme (Forall ([ "A"; "B" ], vec (Alpha "A") (LNum 5)))
+  = "∀ A, B. Vec A 5"
