@@ -89,10 +89,10 @@ let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
   match typ with
   | Bool -> Bool
   | Nat -> Nat
-  | Vec n -> (
+  | Vec (tp, n) -> (
       match len_of_tm t with
-      | Some len -> Vec (len_subst n x len)
-      | None when not (StringSet.mem x (vars n)) -> Vec n
+      | Some len -> Vec (tp_subst tp x t, len_subst n x len)
+      | None when not (StringSet.mem x (vars n)) -> Vec (tp_subst tp x t, n)
       | None ->
           raise
             (Type_error
@@ -115,50 +115,71 @@ let rec tp_subst (typ : tp) (x : string) (t : chk_tm) : tp =
 
 (* unit tests for tp_subst *)
 let _ = reset_fresh_var_ctr ()
-let%test _ = tp_subst (Vec (LNum 0)) "x" (Num 0) = Vec (LNum 0)
-let%test _ = tp_subst (Vec (LVar "x")) "x" (Num 0) = Vec (LNum 0)
+let%test _ = tp_subst (vec Nat (LNum 0)) "x" (Num 0) = vec Nat (LNum 0)
+let%test _ = tp_subst (vec Nat (LVar "x")) "x" (Num 0) = vec Nat (LNum 0)
 let%test _ = tp_subst (Pi ("x", Nat, Nat)) "x" (Num 0) = Pi ("x", Nat, Nat)
 
 let%test _ =
-  tp_subst (Pi ("x", Nat, Vec (LVar "x"))) "x" (Num 0)
-  = Pi ("x", Nat, Vec (LVar "x"))
+  tp_subst (Pi ("x", Nat, vec Nat (LVar "x"))) "x" (Num 0)
+  = Pi ("x", Nat, vec Nat (LVar "x"))
 
 let%test _ =
-  tp_subst (Pi ("x", Nat, Vec (LVar "n"))) "n" (Num 45)
-  = Pi ("#0", Nat, Vec (LNum 45))
+  tp_subst (Pi ("x", Nat, vec Nat (LVar "n"))) "n" (Num 45)
+  = Pi ("#0", Nat, vec Nat (LNum 45))
 
 let%test _ =
   tp_subst
-    (Pi ("x", Nat, Pi ("_", Vec (LVar "x"), Vec (LVar "n"))))
+    (Pi ("x", Nat, Pi ("_", vec Nat (LVar "x"), vec Nat (LVar "n"))))
     "n" (Num 15)
-  = Pi ("#1", Nat, Pi ("#3", Vec (LVar "#1"), Vec (LNum 15)))
+  = Pi ("#1", Nat, Pi ("#3", vec Nat (LVar "#1"), vec Nat (LNum 15)))
 
 let%test _ =
-  let actual = tp_subst (Pi ("_", Vec (LNum 0), Vec (LNum 1))) "x" Nil in
-  let expected = Pi ("#4", Vec (LNum 0), Vec (LNum 1)) in
+  let actual =
+    tp_subst (Pi ("_", vec Nat (LNum 0), vec Nat (LNum 1))) "x" Nil
+  in
+  let expected = Pi ("#4", vec Nat (LNum 0), vec Nat (LNum 1)) in
   actual = expected
 
 let _ = reset_fresh_var_ctr ()
 let%test _ = tp_subst (Sigma ("x", Nat, Nat)) "x" (Num 0) = Sigma ("x", Nat, Nat)
 
 let%test _ =
-  tp_subst (Sigma ("x", Nat, Vec (LVar "x"))) "x" (Num 0)
-  = Sigma ("x", Nat, Vec (LVar "x"))
+  tp_subst (Sigma ("x", Nat, vec Nat (LVar "x"))) "x" (Num 0)
+  = Sigma ("x", Nat, vec Nat (LVar "x"))
 
 let%test _ =
-  tp_subst (Sigma ("x", Nat, Vec (LVar "n"))) "n" (Num 45)
-  = Sigma ("#0", Nat, Vec (LNum 45))
+  tp_subst (Sigma ("x", Nat, vec Nat (LVar "n"))) "n" (Num 45)
+  = Sigma ("#0", Nat, vec Nat (LNum 45))
 
 let%test _ =
   let actual =
     tp_subst
-      (Sigma ("x", Nat, Sigma ("_", Vec (LVar "x"), Vec (LVar "n"))))
+      (Sigma ("x", Nat, Sigma ("_", vec Nat (LVar "x"), vec Nat (LVar "n"))))
       "n" (Num 15)
   in
   let expected =
-    Sigma ("#1", Nat, Sigma ("#3", Vec (LVar "#1"), Vec (LNum 15)))
+    Sigma ("#1", Nat, Sigma ("#3", vec Nat (LVar "#1"), vec Nat (LNum 15)))
   in
   actual = expected
+
+let%test _ =
+  let actual = tp_subst (Vec (Vec (Nat, LVar "n"), LVar "n")) "n" (Num 42) in
+  let expected = Vec (Vec (Nat, LNum 42), LNum 42) in
+  actual = expected
+
+let%test_unit _ =
+  try
+    ignore
+      (tp_subst
+         (Vec (Vec (Nat, LVar "y"), LNum 1))
+         "y"
+         (Syn (App (Var "f", sv "x"))));
+    failwith "No exception raised."
+  with
+  | Type_error
+      "Cannot replace variable 'y' with non-length term 'f x' in 'Vec Nat y'."
+  ->
+    ()
 
 (** Perform [[x'/x] n] on the length [n]. *)
 let rec len_rename (x' : string) (x : string) (n : len) : len =
@@ -485,7 +506,7 @@ let rec tp_eq (t1 : tp) (t2 : tp) (delta : equation list) : bool =
   match (t1, t2) with
   | Nat, Nat -> true
   | Bool, Bool -> true
-  | Vec t1', Vec t2' -> same_size t1' t2' delta
+  | Vec (tp1, n1), Vec (tp2, n2) -> tp_eq tp1 tp2 delta && same_size n1 n2 delta
   | Pi (x, tpA, tpB), Pi (y, tpC, tpD) ->
       (* Change the vars x and y into a fresh unseen variable just for the sake of the comparison *)
       let fresh_var = sv (get_fresh_var ()) in
@@ -500,53 +521,63 @@ let rec tp_eq (t1 : tp) (t2 : tp) (delta : equation list) : bool =
   | _, _ -> false
 
 (* unit tests for tp_eq *)
-let%test _ = tp_eq (Vec (LNum 0)) (Vec (LNum 0)) []
-let%test _ = tp_eq (Vec (LNum 1)) (Vec (LNum 1)) []
-let%test _ = tp_eq (Vec (LVar "y")) (Vec (LVar "y")) []
-let%test _ = not (tp_eq (Vec (LVar "x")) (Vec (LVar "y")) [])
-let%test _ = not (tp_eq (Vec (LNum 1)) (Vec (LNum 0)) [])
+let%test _ = tp_eq (vec Nat (LNum 0)) (vec Nat (LNum 0)) []
+let%test _ = tp_eq (vec Bool (LNum 1)) (vec Bool (LNum 1)) []
+let%test _ = tp_eq (vec Nat (LVar "y")) (vec Nat (LVar "y")) []
 
 let%test _ =
   tp_eq
-    (Vec (LSum [ LNum 3; LNum 9; LVar "y"; LVar "x"; LNum 1; LNum 2; LVar "z" ]))
-    (Vec (LSum [ LNum 15; LVar "x"; LVar "y"; LVar "z" ]))
+    (vec (vec Nat (LVar "x")) (LVar "y"))
+    (vec (vec Nat (LVar "x")) (LVar "y"))
+    []
+
+let%test _ = not (tp_eq (vec Nat (LVar "x")) (vec Nat (LVar "y")) [])
+let%test _ = not (tp_eq (vec Nat (LNum 1)) (vec Nat (LNum 0)) [])
+
+let%test _ =
+  tp_eq
+    (vec Nat
+       (LSum [ LNum 3; LNum 9; LVar "y"; LVar "x"; LNum 1; LNum 2; LVar "z" ]))
+    (vec Nat (LSum [ LNum 15; LVar "x"; LVar "y"; LVar "z" ]))
     []
 
 let%test _ = tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Nat)) []
 
 let%test _ =
   tp_eq
-    (Pi ("x", Nat, Pi ("y", Nat, Vec (LVar "x"))))
-    (Pi ("x", Nat, Pi ("y", Nat, Vec (LVar "x"))))
+    (Pi ("x", Nat, Pi ("y", Nat, vec Nat (LVar "x"))))
+    (Pi ("x", Nat, Pi ("y", Nat, vec Nat (LVar "x"))))
     []
 
 let%test _ =
   tp_eq
-    (Pi ("a", Nat, Pi ("b", Nat, Vec (LVar "a"))))
-    (Pi ("b", Nat, Pi ("a", Nat, Vec (LVar "b"))))
+    (Pi ("a", Nat, Pi ("b", Nat, vec Nat (LVar "a"))))
+    (Pi ("b", Nat, Pi ("a", Nat, vec Nat (LVar "b"))))
     []
 
-let%test _ = not (tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, Vec (LNum 0))) [])
+let%test _ =
+  not (tp_eq (Pi ("x", Nat, Nat)) (Pi ("y", Nat, vec Nat (LNum 0))) [])
 
 let%test _ =
   not
     (tp_eq
-       (Pi ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
-       (Pi ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       (Pi ("x", Nat, vec Nat (LSum [ LVar "x"; LVar "x" ])))
+       (Pi ("y", Nat, vec Nat (LSum [ LVar "x"; LVar "y" ])))
        [])
 
 let%test _ =
   not
     (tp_eq
-       (Pi ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
-       (Pi ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       (Pi ("y", Nat, vec Nat (LSum [ LVar "x"; LVar "y" ])))
+       (Pi ("x", Nat, vec Nat (LSum [ LVar "x"; LVar "x" ])))
        [])
 
 let%test _ =
-  tp_eq (Vec (LVar "x")) (Vec (LVar "y")) [ mk_equation (LVar "x", LVar "y") ]
+  tp_eq (vec Nat (LVar "x")) (vec Nat (LVar "y"))
+    [ mk_equation (LVar "x", LVar "y") ]
 
 let%test _ =
-  tp_eq (Vec (LVar "x")) (Vec (LVar "y"))
+  tp_eq (vec Nat (LVar "x")) (vec Nat (LVar "y"))
     [ mk_equation (LSum [ LVar "x"; LNum 1 ], LSum [ LVar "y"; LNum 1 ]) ]
 
 let%test _ = tp_eq Bool Bool []
@@ -563,22 +594,22 @@ let%test _ = not (tp_eq (times Bool Nat) (times Nat Nat) [])
 
 let%test _ =
   tp_eq
-    (Sigma ("m1", Nat, Vec (LSum [ LVar "m1"; LVar "n" ])))
-    (Sigma ("m2", Nat, Vec (LSum [ LVar "n'"; LVar "m2"; LNum 0 ])))
+    (Sigma ("m1", Nat, vec Nat (LSum [ LVar "m1"; LVar "n" ])))
+    (Sigma ("m2", Nat, vec Nat (LSum [ LVar "n'"; LVar "m2"; LNum 0 ])))
     [ mk_equation (LVar "n", LVar "n'") ]
 
 let%test _ =
   not
     (tp_eq
-       (Sigma ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
-       (Sigma ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
+       (Sigma ("x", Nat, vec Nat (LSum [ LVar "x"; LVar "x" ])))
+       (Sigma ("y", Nat, vec Nat (LSum [ LVar "x"; LVar "y" ])))
        [])
 
 let%test _ =
   not
     (tp_eq
-       (Sigma ("y", Nat, Vec (LSum [ LVar "x"; LVar "y" ])))
-       (Sigma ("x", Nat, Vec (LSum [ LVar "x"; LVar "x" ])))
+       (Sigma ("y", Nat, vec Nat (LSum [ LVar "x"; LVar "y" ])))
+       (Sigma ("x", Nat, vec Nat (LSum [ LVar "x"; LVar "x" ])))
        [])
 
 (** Check that, in context [gamma], [n] has type [Nat]. *)
@@ -605,12 +636,12 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
   | Num _, Nat -> ()
   | Sum xs, Nat -> List.iter (fun t -> check gamma delta t Nat) xs
   | Syn s, typ when tp_eq (synth gamma delta s) typ delta -> ()
-  | Nil, typ when tp_eq typ (Vec (LNum 0)) delta -> ()
-  | Cons (len, head, tail), Vec n when same_size n (LSum [ len; LNum 1 ]) delta
-    ->
+  | Nil, Vec (_, n) when same_size n (LNum 0) delta -> ()
+  | Cons (len, head, tail), Vec (tp, n)
+    when same_size n (LSum [ len; LNum 1 ]) delta ->
       check_len_nat gamma len;
-      check gamma delta head Nat;
-      check gamma delta tail (Vec len)
+      check gamma delta head tp;
+      check gamma delta tail (Vec (tp, len))
   | False, Bool -> ()
   | True, Bool -> ()
   | Pair (t1, t2), Sigma (x, typ1, typ2) ->
@@ -692,7 +723,7 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
   | VecMatch (vec, nil_case, cons_case), typ -> (
       let vec_type = synth gamma delta vec in
       match vec_type with
-      | Vec n ->
+      | Vec (tp, n) ->
           let check_nil_case () =
             let is_reachable =
               Solver.can_equal (mk_equation (n, LNum 0)) delta
@@ -738,8 +769,8 @@ let rec check (gamma : context) (delta : equation list) (tm : chk_tm) (typ : tp)
                   else (y1, t)
                 in
                 let gamma' =
-                  gamma |> Context.add y1 Nat |> Context.add y2 Nat
-                  |> Context.add y3 (Vec (LVar y1))
+                  gamma |> Context.add y1 Nat |> Context.add y2 tp
+                  |> Context.add y3 (Vec (tp, LVar y1))
                 in
                 let delta' =
                   mk_equation (n, LSum [ LVar y1; LNum 1 ]) :: delta
@@ -800,9 +831,9 @@ and synth (gamma : context) (delta : equation list) (t : syn_tm) : tp =
 (* What if you use different names in the term and the type? *)
 let%test_unit _ =
   let typ =
-    Pi ("n", Nat, Pi ("k", Nat, times (Vec (LVar "n")) (Vec (LVar "k"))))
+    Pi ("n", Nat, Pi ("k", Nat, times (vec Nat (LVar "n")) (vec Nat (LVar "k"))))
   in
-  let typ_count = Pi ("n", Nat, Vec (LVar "n")) in
+  let typ_count = Pi ("n", Nat, vec Nat (LVar "n")) in
   let tm =
     Lam
       ( "k",
@@ -816,9 +847,9 @@ let%test_unit _ =
 
 let%test_unit _ =
   let typ =
-    Pi ("n", Nat, Pi ("k", Nat, times (Vec (LVar "n")) (Vec (LVar "k"))))
+    Pi ("n", Nat, Pi ("k", Nat, times (vec Nat (LVar "n")) (vec Nat (LVar "k"))))
   in
-  let typ_count = Pi ("n", Nat, Vec (LVar "n")) in
+  let typ_count = Pi ("n", Nat, vec Nat (LVar "n")) in
   let tm =
     Lam
       ( "k",
@@ -831,14 +862,15 @@ let%test_unit _ =
   try
     check (Context.singleton "count" typ_count) [] tm typ;
     failwith "nothing thrown"
-  with Type_error "Term 'count n' does not have the expected type 'Vec k'." ->
+  with
+  | Type_error "Term 'count n' does not have the expected type 'Vec Nat k'." ->
     ()
 
 let%test_unit _ =
   let typ =
-    Pi ("n", Nat, Pi ("k", Nat, times (Vec (LVar "n")) (Vec (LVar "k"))))
+    Pi ("n", Nat, Pi ("k", Nat, times (vec Nat (LVar "n")) (vec Nat (LVar "k"))))
   in
-  let typ_count = Pi ("n", Nat, Vec (LVar "n")) in
+  let typ_count = Pi ("n", Nat, vec Nat (LVar "n")) in
   let tm =
     Lam
       ( "k",
@@ -851,14 +883,15 @@ let%test_unit _ =
   try
     check (Context.singleton "count" typ_count) [] tm typ;
     failwith "nothing thrown"
-  with Type_error "Term 'count k' does not have the expected type 'Vec n'." ->
+  with
+  | Type_error "Term 'count k' does not have the expected type 'Vec Nat n'." ->
     ()
 
 (** Free variables in a type. *)
 let rec tp_free_vars (t : tp) : str_set =
   match t with
   | Bool | Nat -> StringSet.empty
-  | Vec n -> vars n
+  | Vec (_, n) -> vars n
   | Pi (x, t1, t2) ->
       StringSet.union (tp_free_vars t1)
         (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
@@ -867,14 +900,14 @@ let rec tp_free_vars (t : tp) : str_set =
         (StringSet.diff (tp_free_vars t2) (StringSet.singleton x))
 
 let%test _ = tp_free_vars (arrows [ Nat; Bool; Nat ]) = StringSet.empty
-let%test _ = tp_free_vars (Pi ("n", Nat, Vec (LVar "n"))) = StringSet.empty
+let%test _ = tp_free_vars (Pi ("n", Nat, vec Nat (LVar "n"))) = StringSet.empty
 
 let%test _ =
-  tp_free_vars (Pi ("x", Vec (LVar "x"), Vec (LVar "x")))
+  tp_free_vars (Pi ("x", vec Nat (LVar "x"), vec Nat (LVar "x")))
   = StringSet.singleton "x"
 
 let%test _ =
-  tp_free_vars (Sigma ("x", Vec (LVar "x"), Vec (LVar "x")))
+  tp_free_vars (Sigma ("x", vec Nat (LVar "x"), vec Nat (LVar "x")))
   = StringSet.singleton "x"
 
 (** Typecheck a complete program. *)
