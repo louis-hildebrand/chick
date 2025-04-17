@@ -45,7 +45,7 @@ and chk_tm =
 type tp =
   | Bool
   | Nat
-  | Vec of len
+  | Vec of tp * len
   | Pi of string * tp * tp (* dependent function type (x : A1) -> A2 *)
   | Sigma of string * tp * tp (* dependent pair type (x : A1) * A2 *)
 
@@ -73,6 +73,9 @@ let rec vars (n : len) : str_set =
       List.fold_left
         (fun acc x -> StringSet.union acc (vars x))
         StringSet.empty terms
+
+(** Shorthand for a vector type. *)
+let vec (tp : tp) (n : len) : tp = Vec (tp, n)
 
 (** Shorthand for the type of a non-dependent function. *)
 let arrow (t1 : tp) (t2 : tp) : tp = Pi ("_", t1, t2)
@@ -308,22 +311,39 @@ let rec string_of_tp (t : tp) : string =
   match t with
   | Nat -> "Nat"
   | Bool -> "Bool"
-  | Vec n ->
-      let should_parenthesize =
+  | Vec (tp, n) ->
+      let should_parenthesize_tp =
+        match tp with Nat | Bool -> false | _ -> true
+      in
+      let should_parenthesize_len =
         match n with LNum _ | LVar _ -> false | _ -> true
       in
-      let s = string_of_len n in
-      if should_parenthesize then "Vec (" ^ s ^ ")" else "Vec " ^ s
+      let tp_str =
+        if should_parenthesize_tp then "(" ^ string_of_tp tp ^ ")"
+        else string_of_tp tp
+      in
+      let s =
+        if should_parenthesize_len then "(" ^ string_of_len n ^ ")"
+        else string_of_len n
+      in
+      "Vec " ^ tp_str ^ " " ^ s
   | Pi (x, t1, t2) ->
       "Pi (" ^ x ^ ":" ^ string_of_tp t1 ^ ") . " ^ string_of_tp t2
   | Sigma (x, t1, t2) ->
       "Sigma (" ^ x ^ ":" ^ string_of_tp t1 ^ ") . " ^ string_of_tp t2
 
 let%test _ = string_of_tp Nat = "Nat"
-let%test _ = string_of_tp (Vec (LNum 0)) = "Vec 0"
-let%test _ = string_of_tp (Vec (LVar "n")) = "Vec n"
-let%test _ = string_of_tp (Vec (LSum [ LVar "n"; LVar "m" ])) = "Vec (n + m)"
-let%test _ = string_of_tp (Pi ("n", Nat, Vec (LVar "n"))) = "Pi (n:Nat) . Vec n"
+let%test _ = string_of_tp (vec Nat (LNum 0)) = "Vec Nat 0"
+let%test _ = string_of_tp (Vec (Bool, LVar "n")) = "Vec Bool n"
+
+let%test _ =
+  string_of_tp (Vec (Vec (Nat, LVar "n"), LVar "n")) = "Vec (Vec Nat n) n"
+
+let%test _ =
+  string_of_tp (Vec (Nat, LSum [ LVar "n"; LVar "m" ])) = "Vec Nat (n + m)"
+
+let%test _ =
+  string_of_tp (Pi ("n", Nat, Vec (Nat, LVar "n"))) = "Pi (n:Nat) . Vec Nat n"
 
 let%test _ =
   let actual = string_of_tp (arrow (times Nat Nat) Nat) in
@@ -331,4 +351,5 @@ let%test _ =
   actual = expected
 
 let%test _ =
-  string_of_tp (Sigma ("n", Nat, Vec (LVar "n"))) = "Sigma (n:Nat) . Vec n"
+  string_of_tp (Sigma ("n", Nat, vec Bool (LVar "n")))
+  = "Sigma (n:Nat) . Vec Bool n"
