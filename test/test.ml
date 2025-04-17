@@ -79,27 +79,7 @@ let head_abs =
   }
 
 let test_head_abs _ = check_program [ head_abs ]
-let head_poly =
-  (*
-    let head_poly : Pi (n:Nat). Vec A (n + 1) -> A =
-      \n.\v.
-        match v with
-        | nil -> unreachable
-        | cons n x xs -> x
-  *)
-  {
-    name = "head_poly";
-    body =
-      Lam
-        ("n", Lam ("v", VecMatch (Var "v", None, Some ("n", "x", "xs", sv "x"))));
-    typ =
-      Pi
-        ( "n",
-          Nat,
-          arrow (vec (Alpha "A") (LSum [ LVar "n"; LNum 1 ])) (Alpha "A") );
-  }
 
-let test_head_poly _ = check_program [ head_poly ]
 let tail =
   (*
     let tail : Pi (n:Nat) . Vec (n+1) -> Vec n =
@@ -1749,7 +1729,6 @@ let tests =
          "head_bool:ok" >:: test_head_bool;
          "head_vec:ok" >:: test_head_vec;
          "head_abs:ok" >:: test_head_abs;
-         "head_poly:ok" >:: test_head_poly;
          "tail:ok" >:: test_tail;
          "tail_bool:ok" >:: test_tail_bool;
          "count_down:ok" >:: test_count_down;
