@@ -1,0 +1,777 @@
+\documentclass[acmsmall,nonacm]{acmart}
+\usepackage{proof}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{simplebnf}
+\usepackage{listings}
+\usepackage{lstautogobble}
+\usepackage{url}
+\usepackage{multicol}
+
+\title{A type checker for a dependently-typed list language}
+
+\author{Abd-El-Aziz Zayed}
+\affiliation{%
+  \institution{McGill University}
+  \city{Montreal}
+  \country{Canada}
+}
+\email{abd-el-aziz.zayed@mail.mcgill.ca}
+
+\author{Louis Hildebrand}
+\affiliation{%
+  \institution{McGill University}
+  \city{Montreal}
+  \country{Canada}
+}
+\email{louis.hildebrand@mail.mcgill.ca}
+
+\input{macros}
+
+\lstdefinestyle{ourstyle}{
+    basicstyle=\ttfamily\footnotesize,
+    frame=tb,
+    autogobble=true,
+    numbers=left,
+    stringstyle=\color{orange},
+    keywords=[1]{let, fix, with, match, and, rec, true, false, nil, cons},
+    keywordstyle=[1]\color{blue},
+    comment=[l]{//},
+    morecomment=[s]{(*}{*)},
+    morekeywords=[2]{Pi,Vec,Nat,Bool,Sigma},
+    keywordstyle=[2]{\color{darkgreen}},
+    mathescape=true,
+    commentstyle=\color{gray}
+}
+\lstset{style=ourstyle}
+
+\SetBNFLayout{
+    colspec={llcll},
+    column{1}={font = \sffamily}
+}
+
+\newcommand{\githuburl}{\url{https://github.com/louis-hildebrand/chick}}
+
+\begin{document}
+
+\maketitle
+
+\section{Abstract}
+
+Functions that operate on lists often have pre- and post-conditions related to the list length.
+These are typically checked only at run time.
+We present a minimal dependently‑typed list language along with a bidirectional type checker which can instead enforce these constraints at compile time.
+\footnote{The implementation is available on GitHub at \githuburl.}
+The language includes a ``vector'' type representing lists indexed by their length.
+The length of a vector is restricted to be a number, variable, or sum.
+Despite this restriction, we show that many useful list functions can be implemented in a safe way.
+
+\section{Introduction}
+
+Many list-related functions have pre-conditions involving list lengths.
+For example, consider the following functions from OCaml's \texttt{List} module \cite{ocaml-list}.
+\begin{itemize}
+    \item $\texttt{List.tl}$ takes as input a \emph{non-empty} list.
+    \item $\texttt{List.nth}$ takes as input an index $n$ and a list \emph{whose length is at least $n + 1$}.
+    \item $\texttt{List.map2}$ takes as input two lists \emph{of the same length}.
+    % \item etc.
+\end{itemize}
+These constraints are all checked at runtime.
+However, it is possible to enforce them at compile-time instead.
+Similarly, list-related functions make certain guarantees about their outputs---i.e., post-conditions.
+For example, in OCaml, $\texttt{List.tl}$ returns a list that is one element shorter than the input.
+Mistakes in the implementation can sometimes be detected by the fact that they violate these post-conditions.
+For example, consider this faulty implementation of the $\texttt{drop}$ function.
+$\texttt{drop}$ expects a list of length $k + n$ and should remove its first $k$ elements to get a vector of length $n$.
+\begin{lstlisting}
+    let rec drop (k : int) (xs : 'a list) : 'a list =
+        match k with
+        | 0 -> []
+        | k -> let k' = k - 1 in
+               drop k (List.tl xs)
+\end{lstlisting}
+In the 0 branch, we return \texttt{[]} (a list of length zero) when we should be returning \texttt{xs} (a list of length $n$).
+\footnote{One of us actually made this typo while testing the type checker!}
+In the non-zero branch, we drop $k$ elements from the tail (which would yield a vector of length $n - 1$) when we should be dropping $k'$ elements (which would yield a vector of length $n$).
+Both of these mistakes can be detected at compile time in a dependently-typed language.
+
+Dependently-typed languages and proof assistants, such as Agda \cite{agda-vec} and Idris \cite{idris-vec}, commonly support defining ``vectors''---that is, lists indexed by their length.
+In this project, we focus on a greatly simplified version of these languages which \emph{only} supports vectors.
+
+Our concrete contributions are as follows.
+\begin{itemize}
+    \item We define the syntax of a minimal dependently-typed list language (section \ref{sec:syntax}).
+    \item We define a type system for the language (section \ref{sec:typing-rules}).
+    The type system can enforce both pre- and post-conditions of functions that operate on lists.
+    \item We demonstrate that the language can easily be extended with new types (section \ref{sec:more-types}).
+    \item We implement the type checker as an OCaml program (section \ref{sec:implementation}).
+    \item We provide examples of safe list programs written in our language (section \ref{sec:examples}).
+    \item We document some challenges we encountered in designing and implementing the type system (section \ref{sec:challenges}).
+\end{itemize}
+
+\section{Development}
+
+\subsection{Minimal Language}
+
+We start by defining a small, very limited language and gradually extend it.
+
+\subsubsection{Syntax}
+\label{sec:syntax}
+
+The initial language has only one base type---$\nat$---representing natural numbers.
+It also supports ``vectors''---denoted $\gvectype{A}{\ell}$---which represent lists of length $\ell$ containing elements of type $A$.
+Finally, dependent functions are represented with the $\Pi$ type.
+This is a strict generalization of the usual arrow type; $A_1 \rightarrow A_2$ is equivalent to $\pitype{x}{A_1}{A_2}$, where $x$ is a variable that does not occur free in $A_2$.
+In this report, we use $A_1 \rightarrow A_2$ as shorthand for such a ``constant'' $\Pi$ type.
+
+The length of a vector is restricted to be a natural number, a variable, or a sum of terms which are valid lengths.
+This is to make checking equality of lengths decidable (section \ref{sec:len-eq-decidable}).
+
+\begin{center}
+\begin{bnf}
+    $A$ : Type ::=
+        | $\nat$                 : Natural numbers
+        | $\gvectype{A}{\ell}$   : Fixed-size lists
+        | $\pitype{x}{A_1}{A_2}$ : Dependent functions
+        ;;
+    $\ell$ : Length ::= $n$ // $x$ // $\ell_1 + ... + \ell_k$
+        ;;
+    $n$ : Numeral :in: $\mathbb{N}$ ;;
+\end{bnf}
+\end{center}
+
+\noindent
+We use a bidirectional type system, so terms are separated into checkable terms $t$ and synthesizable terms $s$.
+
+\begin{center}
+\begin{bnf}
+    $t$ : Chk. ::=
+        | $s$ : Synth. term
+        | $\lambda x . t$ : Abstraction
+        | $\fix x.t$ : Recursion
+        | $n$ : Numeral
+        | $t_1 + ... + t_k$ : Sum
+        | $\nil$ : Empty vec
+        | $\cons{\ell}{t_1}{t_2}$ : Prepend to vec
+        % | $\left(\texttt{match} \; s \; \texttt{with} \; [ | 0 \rightarrow t_1 ] [ | x + 1 \rightarrow t_2 ] \right)$
+        | $\left( \natmatch{s}{t_1}{x}{t_2} \right)$ : Pattern match on nat
+        | $\left( \vecmatch{s}{t_1}{x_1}{x_2}{x_3}{t_2} \right)$ : Pattern match on vec
+        ;;
+    $s$ : Syn. ::=
+        | $x$ : Variable
+        | $\app{s}{t}$  : Application
+        ;;
+\end{bnf}
+\end{center}
+
+\noindent
+Note that the programmer can actually omit unreachable branches of $\texttt{match}$ expressions.
+
+A program is a sequence of declarations, each of which must be accompanied by a type annotation.
+
+\subsubsection{Typing Judgements}
+
+Our type system involves the following four judgements.
+
+\begin{itemize}
+    \item $\boxed{\Gamma|\Delta \vdash t \chk A}$ (In context $\Gamma$ and with assumptions $\Delta$, $t$ has type $A$.)
+    \item $\boxed{\Gamma|\Delta \vdash s \syn A}$ (In context $\Gamma$ and with assumptions $\Delta$, $s$ synthesizes type $A$.)
+    \item $\boxed{\Delta \vdash A_1 \equiv A_2}$ (With assumptions $\Delta$, the types $A_1$ and $A_2$ are equivalent.)
+    \item $\boxed{\Delta \vdash \ell_1 \equiv \ell_2}$ (With assumptions $\Delta$, the lengths $\ell_1$ and $\ell_2$ are equivalent.)
+\end{itemize}
+
+\noindent
+As usual, $\Gamma$ denotes the typing context, which maps variable names to types.
+
+\begin{center}
+\begin{bnf}
+    $\Gamma$ : Type context ::= $\cdot$ // $\Gamma , x \colon A$ ;;
+\end{bnf}
+\end{center}
+
+\noindent
+Furthermore, there is a context $\Delta$ which records assumptions about lengths.
+New assumptions are introduced when entering a branch of a \texttt{match} expression.
+
+\begin{center}
+\begin{bnf}
+    $\Delta$ : Assumptions ::= $\cdot$ // $\Delta , \ell_1 = \ell_2$ ;;
+\end{bnf}
+\end{center}
+
+\noindent
+For example, the types $\gvectype{\nat}{n}$ and $\gvectype{\nat}{0}$ are not equivalent in general but are equivalent if $n$ is assumed to be zero.
+That is, $\cdot \not\vdash \gvectype{\nat}{n} \equiv \gvectype{\nat}{0}$ but $(\cdot,n=0) \vdash \gvectype{\nat}{n} \equiv \gvectype{\nat}{0}$.
+
+\subsubsection{Typing Rules}
+\label{sec:typing-rules}
+
+\paragraph{Synthesizable terms}
+The rules for synthesizable terms are as follows.
+\begin{inferences}
+    \infer{\Gamma|\Delta \vdash x \syn A}{\Gamma(x) = A}
+    \qquad \infer{\Gamma|\Delta \vdash \app{s}{t} \syn [t / x] B}{\Gamma|\Delta \vdash s \syn \pitype{x}{A}{B} & \Gamma|\Delta \vdash t \chk A}
+\end{inferences}
+
+\noindent
+To see why the substitution $[t/x] B$ is necessary in the rule for applications, consider the function $\texttt{reverse} \; : \; \pitype{n}{\nat}{\gvectype{\nat}{n} \rightarrow \gvectype{\nat}{n}}$.
+We expect $\app{\texttt{reverse}}{42}$ to have type $\gvectype{\nat}{42} \rightarrow \gvectype{\nat}{42}$.
+
+\paragraph{Checkable terms}
+The rules for checkable terms are as follows.
+\addtolength{\jot}{1.5pt}
+\begin{inferences}
+    \infer{\Gamma|\Delta \vdash s \chk A}{\Gamma|\Delta \vdash s \syn B & \Delta \vdash A \equiv B}
+    \qquad
+    \infer{\Gamma|\Delta \vdash \lambda x.t \chk \pitype{x}{A}{B}}{(\Gamma,x:A)|\Delta \vdash t \chk B}
+    \qquad
+    \infer{\Gamma|\Delta \vdash \fix x.t \chk A}{(\Gamma,x:A)|\Delta \vdash t \chk A}
+    \\
+    \infer{\Gamma|\Delta \vdash n \chk \nat}{}
+    \qquad
+    \infer{\Gamma|\Delta \vdash t_1 + ... + t_k \chk \nat}{\forall 1 \leq i \leq k , \Gamma|\Delta \vdash t_i \chk \nat}
+    % Example: nil <== Vec (0 + 0)
+    \\
+    \infer{\Gamma|\Delta \vdash \nil \chk \gvectype{A}{\ell}}{\Delta \vdash \ell \equiv 0}
+    \\
+    \infer{\Gamma|\Delta \vdash \cons{\ell}{t_1}{t_2} \chk \gvectype{A}{\ell'}}{\Gamma|\Delta \vdash \ell \chk \nat & \Gamma|\Delta \vdash t_1 \chk A & \Gamma|\Delta \vdash t_2 \chk \gvectype{A}{\ell} & \Delta \vdash \ell' \equiv \ell + 1}
+    \\
+    \infer{
+        \Gamma|\Delta \vdash \natmatch{x}{t_0}{y}{t_1} \chk A
+    }{
+        \Gamma|\Delta \vdash x \syn \nat
+        & \Gamma|(\Delta,x=0) \vdash t_0 \chk A
+        & (\Gamma,y:\nat)|(\Delta,x=y+1) \vdash t_1 \chk A
+    }
+    \\
+    \deduce{
+    \infer{
+        \Gamma|\Delta \vdash \vecmatch{s}{t_0}{x_1}{x_2}{x_3}{t_1} \chk A
+    }{
+        \Gamma|\Delta \vdash s \syn \gvectype{B}{\ell}
+        & \Gamma|(\Delta , \ell = 0) \vdash t_0 \chk A
+        & \Gamma'|(\Delta ,\ell = x_1+1) \vdash t_1 \chk A
+    }
+    }{
+        % \Delta_z = \Delta , y = 0
+        \Gamma' = \Gamma , x_1:\nat , x_2:B , x_3:\gvectype{B}{x_1}
+        % & \Delta_s = \Delta , y = x_1+1
+    }
+    % % let tail : Pi (n:Nat) . Vec (n+1) -> Vec n =
+    % %   \n.\v.
+    % %     vmatch v with
+    % %     | nil          -> impossible
+    % %     | cons n' x xs -> xs  // xs : Vec n'
+    % % let map : Pi (n:Nat) . Vec n -> (Nat -> Nat) -> Vec n =
+    % %    \n.\v.\f.
+    % %      nmatch n with
+    % %      | 0 -> count_down n  // Vec 0
+    % % forall n. (n + 1 = 0) => ???
+    % % forall n. (n + 1 = n' + 1) => n = n'
+    % \deduce{
+    %     \infer{
+    %         \Gamma \vdash \natmatch{x}{t_0}{y}{t_1} \chk A
+    %     }{
+    %         \Gamma \vdash x \syn \nat
+    %         & [0/x] \Gamma \vdash [0/x] t_0 \chk [0/x] A
+    %         & [y+1/x] \Gamma' \vdash [y+1/x] t_1 \chk [y+1/x] A
+    %     }
+    % }{\Gamma' = (\Gamma, y:\nat)}
+    % \\
+    % % TODO: Also check that y_1, y_2, y_3 are all distinct?
+    % \deduce{
+    %     \infer{
+    %         \Gamma \vdash \vecmatch{s}{t_0}{y_1}{y_2}{y_3}{t_1} \chk A
+    %     }{
+    %         \Gamma \vdash s \syn \vectype x
+    %         & [0/x] \Gamma \vdash [0/x] t_0 \chk [0/x] A
+    %         & [y_1+1/x] \Gamma' \vdash [y_1+1/x] t_1 \chk [y_1+1/x] A
+    %     }
+    % }{\Gamma' = (\Gamma, y_1:\nat, y_2:\nat, y_3:\vectype{y_1})}
+\end{inferences}
+
+\noindent
+Notice how the rule for $\nil$ does not directly say $\nil \chk \gvectype{A}{0}$ but instead checks that the length is \emph{equivalent} to zero.
+This is to handle cases like checking $\nil$ against $\gvectype{A}{(0 + 0)}$, or against $\gvectype{A}{n}$ when $\Delta \vdash n \equiv 0$.
+However, the rule $\Gamma|\Delta \vdash n \chk \nat$ is valid because the only type that is equivalent to $\nat$ is $\nat$ itself, so syntactic equality suffices.
+% TODO: Comment on some more of the tricky rules?
+
+\paragraph{Type equality}
+The rules for type equality are as follows.
+\begin{inferences}
+    \infer{\Delta \vdash \nat \equiv \nat}{}
+    \qquad
+    \infer{\Delta \vdash \gvectype{A}{n} \equiv \gvectype{B}{m}}
+    {\Delta \vdash A \equiv B & \Delta \vdash n \equiv m}
+    \qquad
+    \infer{\Delta \vdash \pitype{x}{A_1}{B_1} \equiv \pitype{x}{A_2}{B_1}}{\Delta \vdash A_1 \equiv A_2 & \Delta \vdash B_1 \equiv B_2}
+\end{inferences}
+
+\noindent
+In practice, $\Pi$ types with different variable names can be compared by replacing the variables to a fresh variable.
+
+\paragraph{Length equality}
+\label{sec:prop-construction}
+To check equality of lengths ($\Delta \vdash \ell \equiv \ell'$), we construct a proposition as follows.
+Let $\vec{x} = x_1, ..., x_k$ be the set of all the variables in $\ell$, $\ell'$, and $\Delta$.
+Let $\Delta = \cdot , \ell_1 = \ell_1' , ... , \ell_j = \ell_j'$.
+We want to check that the equation holds given all the assumptions, so the proposition is
+\begin{equation*}
+    \forall \vec{x} , \left(\forall 1 \leq i \leq j, \ell_i = \ell_i'\right) \implies \ell = \ell'
+\end{equation*}
+
+\noindent
+However, suppose the programmer omits a branch.
+Then we want to check whether there \emph{exists} any instantiation of the variables such that all the assumptions hold (i.e., we get to the current match expression) \emph{and} we take the missing branch.
+In that case, the proposition is instead
+\begin{equation*}
+    \exists \vec{x} , \left(\forall 1 \leq i \leq j, \ell_i = \ell_i'\right) \land \ell = \ell'
+\end{equation*}
+
+\noindent
+We can use the same technique to check whether any of the branches that \emph{were} implemented are unreachable, in which case the type checker can ask the programmer to omit the unreachable branch.
+
+\label{sec:len-eq-decidable}
+Since we restrict the length of a vector to only allow addition, these propositions are in the language of Presburger arithmetic.
+Presburger arithmetic is decidable \cite{presburger-1929, haase-2018}, which means that type checking our language is also decidable.
+
+\paragraph{Substitutions}
+Some rules involve substitution in a type or in a length.
+Substitution for types is defined as follows.
+\begin{align*}
+    \begin{cases}
+        [t / x] \nat = \nat \\
+        [\ell' / x] (\gvectype{A}{\ell}) = \gvectype{([\ell' / x]A)}{([\ell' / x] \ell)} \\
+        [t / x] (\gvectype{A}{\ell}) = \gvectype{([t / x]A)}{\ell}
+            & \textnormal{if } x \notin \textnormal{FV}(\ell) \textnormal{ and $t$ is not a length} \\
+        [t / x] (\pitype{y}{A}{B}) = \pitype{y}{[t/x]A}{[t/x]B} & \textnormal{if } y \neq x \textnormal{ and } y \not\in \textnormal{FV}(t)
+    \end{cases}
+\end{align*}
+% In the rule for $\Pi$ types, it is important to substitute in $A$ \emph{and} $B$.
+% For example, consider the type $\pitype{x}{\nat}{\pitype{\_}{\gvectype{A}{x}}{\gvectype{A}{x}}}$.
+% Both the type of the second parameter and the output type refer to the first argument.
+% The substitution $[42/x] \left(\pitype{\_}{\gvectype{A}{x}}{\gvectype{A}{x}}\right)$ should yield $\pitype{\_}{\gvectype{A}{42}}{\gvectype{A}{42}}$.
+
+Notice that substitution into a vector is only possible if the variable does not occur within the type or the new term is a valid length.
+For example, $[42 / x] (\gvectype{A}{x})$ is clearly valid.
+We also need to be able to pass arguments that are not lengths---as long as they are for a non-dependent function---so $[\nil / v] (\gvectype{A}{0})$ should also be valid.
+However, a substitution like $[n \cdot k / x] (\gvectype{A}{x})$ is \emph{not} valid (even if $n \cdot k$ was a valid term).
+See section \ref{sec:limitation-vec-len} for a discussion of this limitation.
+
+Substitution into a length is straightforward.
+\begin{equation*}
+    \begin{cases}
+        [\ell / x] x = \ell \\
+        [\ell / x] y = y & y \neq x \\
+        [\ell / x] n = n \\
+        [\ell / x] (\ell_1 + ... + \ell_k) = ([\ell / x] \ell_1) + ... + ([\ell / x] \ell_k)
+    \end{cases}
+\end{equation*}
+
+In practice, it is also sometimes necessary to rename variables within a checkable or synthesizable term.
+For example, this is used to avoid shadowing in \texttt{match} expressions, which may lead to contradictory assumptions in $\Delta$.
+Renaming is similar to standard substitution.
+
+\subsection{Adding New Types}
+\label{sec:more-types}
+
+Adding new types to the language is straightforward.
+
+\subsubsection{Booleans}
+
+To add booleans, we start by adding one new base type ($\bool$), constructors ($\ttrue$ and $\tfalse$), and a destructor (pattern matching, which is equivalent to if-then-else).
+
+\begin{center}
+\begin{bnf}
+    $A$ : Type ::= ... // $\bool$
+        ;;
+    $t$ : Check. term ::=
+        | ...
+        | $\ttrue$ // $\tfalse$
+        | $\left( \boolmatch{s}{t_1}{t_2} \right)$
+        ;;
+\end{bnf}
+\end{center}
+
+\noindent
+We define substitution for the new type and renaming for the new terms.
+\begin{equation*}
+    \begin{cases}
+        & ... \\
+        & [t / x] \bool = \bool
+    \end{cases}
+\end{equation*}
+\begin{equation*}
+    \begin{cases}
+        ... \\
+        [x' / x] \ttrue = \ttrue \\
+        [x' / x] \tfalse = \tfalse \\
+        [x' / x] (\boolmatch{s}{t_1}{t_2}) \\ \qquad\qquad = \boolmatch{[x'/x]s}{[x'/x]t_1}{[x'/x]t_2}
+    \end{cases}
+\end{equation*}
+
+\noindent
+We add a typing rule for each new term.
+\begin{inferences}
+    \infer{\Gamma|\Delta \vdash \tfalse \chk \bool}{}
+    \qquad
+    \infer{\Gamma|\Delta \vdash \ttrue \chk \bool}{}
+    \\
+    \infer{\Gamma|\Delta \vdash \left(\boolmatch{s}{t_1}{t_2}\right) \chk A}{\Gamma|\Delta \vdash s \syn \bool & \Gamma|\Delta \vdash t_1 \chk A & \Gamma|\Delta \vdash t_2 \chk A}
+\end{inferences}
+
+\noindent
+Finally, we add a new rule for equality of types.
+\begin{inferences}
+    \infer{\Delta \vdash \bool \equiv \bool}{}
+\end{inferences}
+
+\subsubsection{Dependent Pairs} \label{sec:dependent-pairs}
+
+In some functions, such as \texttt{filter}, the output length cannot be computed from the input lengths.
+Such functions require ``dependent pairs.''
+We use $\sigmatype{x}{A_1}{A_2}$ to denote a dependent pair whose first element has type $A_1$ and in which the type of the second element, $A_2$, may depend on the value $x$ of the first element.
+\begin{center}
+\begin{bnf}
+    $A$ : Type ::= ... // $\sigmatype{x}{A_1}{A_2}$
+        ;;
+\end{bnf}
+\end{center}
+
+\noindent
+Similarly to how $\Pi$ types strictly generalize arrow types, $\Sigma$ is a strict generalization of the standard ``product'' type.
+In general, $A_1 \times A_2 = \sigmatype{x}{A_1}{A_2}$, where $x \notin \textnormal{FV}(A_2)$.
+
+We also add a constructor and destructor for dependent pairs.
+% As with $\Pi$ types, no changes are required here compared to the non-dependent counterparts.
+
+\begin{center}
+\begin{bnf}
+    $t$ : Check. term ::=
+        | ...
+        | $\pair{t_1}{t_2}$ : Pair
+        | $\left( \pairmatch{s}{x_1}{x_2}{t} \right)$ : Pattern match on pair
+        ;;
+\end{bnf}
+\end{center}
+
+\noindent
+We use pattern matching as a general-purpose destructor for pairs; \texttt{fst} and \texttt{snd} can be implemented using pattern matching.
+For example, to access the first element, use $\pairmatch{x}{y}{\_}{y}$.
+
+We need to implement type substitution for $\Sigma$ types.
+This is similar to the rule for $\Pi$ types.
+\begin{align*}
+    \begin{cases}
+        ... \\
+        [t / x] (\sigmatype{y}{A}{B}) = \sigmatype{y}{[t/x]A}{[t/x]B} & \textnormal{if } y \neq x \textnormal{ and } y \not\in \textnormal{FV}(t)
+    \end{cases}
+\end{align*}
+
+\noindent
+We must also implement renaming for the new terms.
+\begin{equation*}
+    \begin{cases}
+        ... \\
+        [x' / x] \pair{t_1}{t_2} = \pair{[x'/x]t_1}{[x'/x]t_2} \\
+        [x' / x] \left( \pairmatch{s}{y_1}{y_2}{t} \right)
+            \\ \qquad\qquad = \pairmatch{[x'/x]s}{y_1}{y_2}{[x'/x]t} & \textnormal{if } x \notin \{y_1, y_2\} \textnormal{ and } \{y_1, y_2\} \cap \textnormal{FV}(t) = \emptyset
+    \end{cases}
+\end{equation*}
+
+\noindent
+We add new typing rules for pairs and pattern matching.
+\begin{align*}
+    & \infer{
+        \Gamma|\Delta \vdash \pair{t_1}{t_2} \chk \sigmatype{x}{A_1}{A_2}
+    }{
+        \Gamma|\Delta \vdash t_1 \chk A_1
+        & \Gamma|\Delta \vdash t_2 \chk [t_1/x] A_2
+    } \\
+    & \infer{
+        \Gamma|\Delta \vdash \left( \pairmatch{s}{x_1}{x_2}{t} \right) \chk A
+    }{
+        \Gamma|\Delta \vdash s \syn \sigmatype{x}{A_1}{A_2}
+        & \Gamma' = \Gamma , x_1:A_1 , x_2:[x_1/x]A_2
+        & \Gamma'|\Delta \vdash t \chk A
+    }
+\end{align*}
+
+\noindent
+Finally, we add a rule for equality of $\Sigma$ types, similarly to the one for $\Pi$ types.
+\begin{inferences}
+    \infer{\Delta \vdash \sigmatype{x}{A_1}{B_1} \equiv \sigmatype{x}{A_2}{B_2}}{\Delta \vdash A_1 \equiv A_2 & \Delta \vdash B_1 \equiv B_2}
+\end{inferences}
+
+% \subsection{Polymorphism}
+% \label{sec:polymorphism}
+
+% We implement the Hindley-Milner algorithm for polymorphic type checking.
+
+% \begin{center}
+% \begin{bnf}
+%     $\hat{A}$ : Type scheme ::= $\forall\alpha_1, \alpha_2,\dots,\alpha_N.A$
+%         ;;
+%     $A$ : Type ::= ... &// $\alpha$
+%         ;;
+%     $\Gamma$ : Context ::= $\cdot$ &// $\Gamma,x\colon \hat{A}$
+%         ;;
+%     $\sigma$ : Type subst. ::= $\cdot$ &// $\sigma,A/\alpha$
+% \end{bnf}
+% \end{center}
+
+\subsection{Examples} \label{sec:examples}
+
+The following programs are all well-typed in our type system.
+
+It is impossible to call $\texttt{tail\_nat}$ on an empty list because the vector has length $n + 1$ and $\not\exists n \in \mathbb{N} , n + 1 = 0$:
+\begin{lstlisting}
+    let tail_nat : $\Pi$(n:Nat) . Vec Nat (n+1) -> Vec Nat n =
+        $\lambda$n.$\lambda$v.match v with
+              | cons _ _ xs -> xs
+\end{lstlisting}
+
+\noindent
+The length of the output of $\texttt{concat}$ is guaranteed to be the sum of the lengths of the inputs:
+
+\begin{lstlisting}
+    let concat : $\Pi$(n:Nat) . $\Pi$(m:Nat) . Vec Nat n -> Vec Nat m -> Vec Nat (n+m) =
+        fix concat.$\lambda$n.$\lambda$m.$\lambda$v1.$\lambda$v2.
+            match v1 with
+            | nil -> v2
+            | cons n' x v1' ->
+                cons (n' + m) x (concat n' m v1' v2)
+\end{lstlisting}
+
+\noindent
+As mentioned in section \ref{sec:dependent-pairs}, filtering requires dependent pairs:
+
+\begin{lstlisting}
+    let filter_nat : $\Pi$(n:Nat) . Vec Nat n -> (Nat -> Bool) -> $\Sigma$(m:Nat) . Vec Nat m =
+        fix filter_nat.$\lambda$n.$\lambda$v.$\lambda$f.
+            match v with
+            | nil -> (0, nil)
+            | cons n' x xs ->
+                match (f x) with
+                | true  -> cons n' x (filter_nat n' xs f)
+                | false -> filter_nat n' xs f
+\end{lstlisting}
+
+\noindent
+Since the $\texttt{Vec}$ type family is generic, it is possible to work with matrices:
+
+\begin{lstlisting}
+    let row_heads : $\Pi$(n:Nat) . $\Pi$(m:Nat) . Vec (Vec Nat (m+1)) n -> Vec Nat n =
+        fix row_heads.$\lambda$n.$\lambda$m.$\lambda$v.
+            match v with
+            | nil -> nil
+            | cons n' row v' ->
+                cons n' (head m row) (row_heads n' m v')
+    let row_tails :
+                $\Pi$(n:Nat) . $\Pi$(m:Nat) . Vec (Vec Nat (m+1)) n -> Vec (Vec Nat m) n =
+        fix row_tails.$\lambda$n.$\lambda$m.$\lambda$v.
+            match v with
+            | nil -> nil
+            | cons n' row v' ->
+                cons n' (tail m row) (row_tails n' m v')
+    let transpose : $\Pi$(n:Nat) . $\Pi$(m:Nat) . Vec (Vec Nat m) n -> Vec (Vec Nat n) m =
+        fix transpose.$\lambda$n.$\lambda$m.$\lambda$v.
+            match m with
+            | 0 -> nil
+            | m' + 1 ->
+                cons m' (row_heads n m' v) (transpose n m' (row_tails n m' v))
+\end{lstlisting}
+
+\subsection{Implementation}
+\label{sec:implementation}
+
+We implement the type checker as an OCaml program.
+For example, the judgements $\boxed{\Gamma|\Delta \vdash t \chk A}$ and $\boxed{\Gamma|\Delta \vdash s \syn A}$ are implemented as mutually-recursive functions with the following signatures.
+
+\begin{lstlisting}
+    let rec check (gamma : context) (delta : equation list)
+            (tm : chk_tm) (typ : tp) : unit =
+        (* ... *)
+    and synth (gamma : context) (delta : equation list) (s : syn_tm) : tp =
+        (* ... *)
+\end{lstlisting}
+
+When comparing lengths and checking reachability, we construct propositions in the language of Presburger arithmetic (as explained in section \ref{sec:prop-construction}).
+To decide whether these propositions are true or false, we use the OCaml bindings for the Z3 SMT solver \cite{z3, z3-ocaml}.
+
+The type checker is available on GitHub at \githuburl.
+More examples of valid and invalid programs are in \href{https://github.com/louis-hildebrand/chick/blob/main/test/test.ml}{test/test.ml}.
+
+\subsection{Challenges}
+\label{sec:challenges}
+
+At first, we used the assumptions introduced in each branch of a $\texttt{match}$ expression by substitution.
+For example, for pattern matching on natural numbers, we used the following rule:
+\begin{inferences}
+    \deduce{
+        \infer{
+            \Gamma \vdash (\natmatch{x}{t_0}{y}{t_1}) \chk A
+        }{
+            \Gamma \vdash x \syn \nat
+            & [0/x] \Gamma \vdash [0/x] t_0 \chk [0/x] A
+            & [y+1/x] \Gamma' \vdash [y+1/x] t_1 \chk [y+1/x] A
+        }
+    }{\Gamma' = (\Gamma, y:\nat)}
+\end{inferences}
+
+\noindent
+This approach has the advantage of being conceptually straightforward.
+To check whether two lengths are equivalent, it suffices to normalize each one and compare syntactically.
+Sums can be normalized by flattening, combining numerals, and sorting the terms.
+There is no need to construct propositions or invoke an SMT solver.
+It may even be possible to allow multiplication of lengths in this scheme, if we apply distributivity during normalization.
+
+However, this strategy also has significant limitations.
+
+First, it only works if the target of pattern matching is a natural number variable or a vector whose length is a variable.
+This excludes some important functions---most notably, \texttt{head} and \texttt{tail}.
+We would like $\texttt{tail}$ to have type $\pitype{n}{\nat}{\gvectype{A}{(n+1)} \rightarrow \gvectype{A}{n}}$.
+The fact that the input vector has length $n + 1$ guarantees it is not empty, but it also prevents us from using $\texttt{match}$.
+
+Second, it requires implementing more general substitution methods.
+This includes substitution in a context, which is apparently prone to subtle bugs \cite{clare-subst-in-ctxt}.
+Furthermore, substitution into a checkable or synthesizable term may introduce non-normal expressions, which are syntactically invalid.
+For example, naively performing the substitution $[42/x](\natmatch{x}{0}{\_}{1})$ yields the syntactically invalid term $\natmatch{42}{0}{\_}{1}$.
+It may be possible to handle this by adapting hereditary substitution \cite{comp523-lec-dependent-types} or by introducing a synthesizable term $t:A$ for a checkable term with a type annotation.
+However, our approach described in section \ref{sec:typing-rules} sidesteps this issue altogether because it only requires \emph{renaming}, which clearly cannot introduce non-normal terms.
+
+Third, substitution can lead to confusing error messages.
+For example, suppose we try to check whether the expression $\natmatch{x}{\cons{0}{0}{\nil}}{y}{\app{\texttt{count}}{x}}$ has type $\gvectype{\nat}{(x+1)}$.
+In the ``cons'' branch we would try to check $\app{\texttt{count}}{(y+1)}$ against type $\gvectype{\nat}{(y+1+1)}$.
+Confusingly, this would fail with a message like ``$\app{\texttt{count}}{(y+1)}$ does not have type $\gvectype{\nat}{(y+1+1)}$,'' despite the fact that the original source code does not include the term $\app{\texttt{count}}{(y+1)}$ or the type $\gvectype{\nat}{(y+1+1)}$.
+
+\section{Conclusion}
+
+\subsection{Limitations}
+
+\paragraph{Vector lengths}
+\label{sec:limitation-vec-len}
+The length of a vector must be a numeral, a variable, or a sum of valid lengths.
+There are a few concrete limitations that stem from this rule.
+
+First, arguments to dependent functions must abide by this rule.
+For example, if $\texttt{count} \; : \; \pitype{n}{\nat}{\gvectype{\nat}{n}}$, then we cannot call $\app{\texttt{count}}{(n \cdot k)}$, since this would make the output have the invalid type $\gvectype{\nat}{(n \cdot k)}$.
+A workaround for this limitation is to first assign $n \cdot k$ to a new variable $m$ and then call $\app{\texttt{count}}{m}$.
+
+Second, this limitation makes it impossible to properly implement functions whose types involve multiplication or division, such as $\texttt{split}$ or $\texttt{join}$.
+On one hand, $\texttt{join}$ can at least be implemented so as to return a $\Sigma$ type.
+That is, we tell the type checker that $\texttt{join}$ returns a vector of some unknown length, not necessarily $n \cdot k$.
+The disadvantages of this workaround are that (1) the type checker will not prevent the programmer from returning a vector of the wrong size and (2) the type checker will not know that joining an $(n + 1) \times (k + 1)$ vector yields a non-empty vector.
+(Indeed, it may not if the programmer returns a vector of the wrong size.)
+On the other hand, it does not seem to be possible to enforce the pre-condition that the length of the input to $\texttt{split}$ must be a product.
+
+If this restriction were relaxed by allowing multiplication of lengths, type checking might become undecidable.
+Peano arithmetic, the theory of natural numbers with addition and multiplication, is undecidable.
+However, perhaps the propositions we wish to prove or disprove are simple enough that it would be acceptable, in practice, to try to prove or disprove them and fail if some timeout is exceeded.
+
+\paragraph{Polymorphism}
+Although the $\texttt{Vec}$ type is generic, it is not possible to write polymorphic functions like $\texttt{map} \; : \; \pitype{n}{\nat}{\gvectype{\alpha}{n} \rightarrow (\alpha \rightarrow \beta) \rightarrow \gvectype{\beta}{n}}$.
+Instead, the programmer must manually write a variant of $\texttt{map}$ for each input and output type.
+
+One option for implementing polymorphism is the Hindley-Milner algorithm \cite{comp523-lec-hm}.
+% It combines unification, which solves type constraints, with let-polymorphism, which generalizes types at definition sites.
+Rather than raising type errors directly, we return a set of constraints which are separately solved using ``unification.''
+For example, we might introduce a constraint set $C$ to our judgements and then update the rule for pattern matching on a vector like this:
+\begin{inferences}
+    \deduce{
+        \infer{
+            \Gamma|\Delta \vdash (\vecmatch{s}{t_0}{x_1}{x_2}{x_3}{t_1}) \chk_{C_1 \cup C_2 \cup C_3 \cup \{B = \gvectype{\alpha}{y}\}} A
+        }{
+            \Gamma|\Delta \vdash s \syn_{C_1} B
+            & \Gamma|\Delta_z \vdash t_0 \chk_{C_2} A
+            & \Gamma_s|\Delta_s \vdash t_1 \chk_{C_3} A
+        }
+    }{
+        \Delta_z = \Delta , y = 0
+        & \Gamma_s = \Gamma , x_1:\forall.\nat , x_2:\forall.\alpha , x_3:\forall.\gvectype{\alpha}{x_1}
+        & \Delta_s = \Delta , y = x_1+1
+    }
+\end{inferences}
+where the length equality check is handled during unification.
+However, it is not entirely clear how the assumptions $\Delta$, which are necessary for the length equality judgement, can be made available to the unification algorithm.
+Furthermore, this rule introduces a fresh variable $y$ which would need to be existentially quantified---in our existing type checker, all variables are universally quantified when comparing lengths.
+Perhaps it would be possible to interleave unification with type checking such that all the information necessary to compare lengths is available during checking rather than unification.
+
+\paragraph{Explicit parameters} \label{sec:limitations-implicit-params}
+All inputs to dependent functions must be provided explicitly, which is not ergonomic.
+For example, although the list $[10, 20, 30]$ would intuitively be written
+\begin{equation*}
+    \texttt{cons} \; 10 \; (\texttt{cons} \; 20 \; (\texttt{cons} \; 30 \; \nil))
+\end{equation*}
+the programmer must actually write
+\begin{equation*}
+    \cons{2}{10}{(\cons{1}{20}{(\cons{0}{30}{\nil})})}
+\end{equation*}
+
+\paragraph{Pattern matching}
+Our language has a separate pattern matching construct for each type.
+It would be more flexible to have one general pattern matching construct that includes a list of ``patterns'' with free variables.
+This would require some extra work to type check the patterns and bind the free variables.
+Another challenge would be to ensure all cases are covered.
+However, it should be possible to do so with a similar strategy to the one we already use for reachability (e.g., construct a proposition that, with the given assumptions, \emph{at least} one of the given branches will match).
+
+\paragraph{Runtime complexity}
+The runtime of checking propositions in Presburger arithmetic is at least doubly exponential in the length of the proposition \cite{fischer-rabin-1998}.
+Therefore, the type checker may run slowly if the programmer writes functions with deeply-nested \texttt{match} expressions or complex expressions for the vector lengths.
+However, this does not appear to be a serious limitation in practice.
+Functions like $\texttt{map}$, $\texttt{fold\_left}$, and $\texttt{tail}$ are small and involve simple propositions.
+
+\paragraph{Typos}
+Although the type checker can detect errors that result in incorrectly-sized vectors, it cannot catch \emph{all} typos.
+For example, the following two functions have an identical type signature and are both well-typed, but return different results.
+The type checker cannot stop the programmer from writing one when they meant to implement the other.
+
+\begin{multicols}{2}
+\begin{lstlisting}
+    // count_down 3 = [3, 2, 1]
+    let count_down : $\Pi$(n:Nat) . Vec Nat n =
+      fix count_down.$\lambda$n.
+        match n with
+        | 0 -> nil
+        | n' + 1 ->
+          cons n' n (count_down n')
+\end{lstlisting}
+\begin{lstlisting}[numbers=none]
+    // count_down 3 = [2, 1, 0]
+    let count_down : $\Pi$(n:Nat) . Vec Nat n =
+      fix count_down.$\lambda$n.
+        match n with
+        | 0 -> nil
+        | n' + 1 ->
+          cons n' n' (count_down n')
+\end{lstlisting}
+\end{multicols}
+
+\subsection{Related Work} \label{sec:related-work}
+
+% TODO: Give previous works that used these $\Pi$ and $\Sigma$ types? (\cite{comp523-lec-dependent-types} LF? Martin-Lof type theory?) I can't find a source for these; it seems like this is just the accepted notation for dependent functions and pairs.
+
+Notable examples of dependently-typed programming languages and proof assistants include Agda \cite{agda}, Idris \cite{idris}, and Rocq \cite{rocq}.
+Vectors are a classic use case for dependent types, and these languages all allow the programmer to define vectors as a user-defined datatype \cite{agda-vec, idris-vec, rocq-vec}.
+Furthermore, they allow dependencies on types other than natural numbers.
+Using the Curry-Howard correspondence, this lets programmers construct types representing propositions such as the equality of natural numbers or the associativity of addition \cite{comp523-lec-agda}.
+
+% TODO: Discuss how to deal with some of the challenges that arise, such as normalisation (normalisation by evaluation?) and avoiding non-terminating terms at the type level (totality checker, e.g., in Idris?)
+
+As mentioned in section \ref{sec:limitations-implicit-params}, it is cumbersome to always explicitly specify lengths when calling dependent functions.
+Agda, Idris, and Rocq all support ``implicit parameters,'' which the compiler will try to infer automatically \cite{agda-implicit-params, idris-implicit-params, rocq-implicit-params}.
+
+\subsection{Summary}
+We presented the design and implementation of a bidirectional type checker for a small, monomorphic, dependently-typed list language.
+The language includes dependent pairs and products, vectors, natural numbers, and booleans.
+The type checker can enforce both pre-conditions and post-conditions for functions operating on vectors at compile time rather than runtime.
+To guarantee decidability of type checking, we restrict the lengths of vectors to the language of Presburger arithmetic.
+Assumptions about the lengths of vectors are introduced when pattern matching and are verified with an SMT solver.
+Despite the restriction on lengths, the language can be used to safely implement non-polymorphic versions of many useful list functions, such as $\texttt{tail}$, $\texttt{concat}$, and $\texttt{filter}$.
+Future work includes relaxing the limitation on lengths, making the language polymorphic, and supporting implicit parameters.
+
+\newpage
+\bibliographystyle{ieeetr}
+\bibliography{references}
+
+\end{document}

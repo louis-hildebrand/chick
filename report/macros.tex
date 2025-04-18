@@ -4,6 +4,8 @@
 \newcommand{\head}[2]{\texttt{head} \; #1 \; #2}
 \newcommand{\tail}[2]{\texttt{tail} \; #1 \; #2}
 \newcommand{\vectype}[1]{\texttt{Vec} \; #1}
+% Generic vec
+\newcommand{\gvectype}[2]{\texttt{Vec} \; #1 \; #2}
 \newcommand{\pitype}[3]{\Pi (#1 \colon #2) . #3}
 \newcommand{\sigmatype}[3]{\Sigma (#1 \colon #2) . #3}
 \newcommand{\nat}{\texttt{Nat}}
@@ -21,3 +23,6 @@
 
 % Multiple inferences side-by-side
 \newenvironment{inferences}{\begin{equation*}\begin{gathered}}{\end{gathered}\end{equation*}}
+
+
+\definecolor{darkgreen}{RGB}{15, 150, 15}
