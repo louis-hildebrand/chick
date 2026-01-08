@@ -1,6 +1,10 @@
 # chick
 
-Project for COMP523: Language-Based Security.
+`chick` is a small programming language with built-in support for lists.
+It is dependently-typed; the list type includes a length and the length can be an expression (e.g., a variable, a sum), not necessarily a constant.
+This repository contains a type checker which can statically detect many bugs that are usually only caught at runtime: trying to access an element in an empty list, zipping two lists of different length, etc.
+For more details, see the [presentation slides](./report/presentation.pdf) or the [report](report/report.pdf).
+This project was done as part of COMP523: Language-Based Security.
 
 ## Running the Project
 
